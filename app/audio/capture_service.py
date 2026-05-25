@@ -40,6 +40,8 @@ class CaptureService:
         self.callbacks_enabled = Event()
         self.callbacks_enabled.set()
         self.callback_lock = Lock()
+        self.stream_lock = Lock()
+        self.loopback_stream = None
         self.threads: list[Thread] = []
 
     def start(self) -> None:
@@ -75,6 +77,14 @@ class CaptureService:
 
     def request_stop(self) -> None:
         self.stop_event.set()
+        with self.stream_lock:
+            stream = self.loopback_stream
+        if stream is not None:
+            try:
+                if stream.is_active():
+                    stream.stop_stream()
+            except Exception:
+                pass
 
     def _emit_status(self, message: str) -> None:
         if not self.callbacks_enabled.is_set():
@@ -151,6 +161,8 @@ class CaptureService:
                     input_device_index=self.config.loopback_device_index,
                     frames_per_buffer=chunk,
                 )
+                with self.stream_lock:
+                    self.loopback_stream = stream
 
                 self._emit_status("System loopback capture online")
 
@@ -159,16 +171,31 @@ class CaptureService:
                     wav_file.setsampwidth(pa.get_sample_size(sample_format))
                     wav_file.setframerate(sample_rate)
 
+                    chunks_written = 0
                     while not self.stop_event.is_set():
-                        data = stream.read(chunk, exception_on_overflow=False)
+                        try:
+                            data = stream.read(chunk, exception_on_overflow=False)
+                        except Exception:
+                            if self.stop_event.is_set():
+                                break
+                            raise
+                        if not data:
+                            continue
                         wav_file.writeframes(data)
+                        chunks_written += 1
                         audio = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
                         level = float(np.sqrt(np.mean(np.square(audio)))) if audio.size else 0.0
                         self._emit_level("system", min(level * 8, 1.0))
 
-                stream.stop_stream()
+                self._emit_status(f"System loopback capture saved {chunks_written} audio chunk(s)")
+                if stream.is_active():
+                    stream.stop_stream()
                 stream.close()
+                with self.stream_lock:
+                    self.loopback_stream = None
             finally:
+                with self.stream_lock:
+                    self.loopback_stream = None
                 pa.terminate()
         except Exception as error:
             self._emit_status(f"System loopback capture failed: {error}")

@@ -169,6 +169,21 @@ QPushButton#DangerButton {{
     border: 1px solid rgba(255, 161, 61, 0.8);
 }}
 
+QPushButton#TableActionButton {{
+    background-color: rgba(255, 138, 31, 0.16);
+    color: {ORANGE};
+    border: 1px solid rgba(255, 138, 31, 0.55);
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-weight: 700;
+}}
+
+QPushButton#TableActionButton:hover {{
+    background-color: {ORANGE};
+    color: #16100A;
+    border: 1px solid {ORANGE_HOVER};
+}}
+
 QPushButton#SidebarButton {{
     background-color: transparent;
     color: {TEXT_SECONDARY};
@@ -208,6 +223,22 @@ QCheckBox::indicator {{
 QCheckBox::indicator:checked {{
     background-color: {ORANGE};
     border: 1px solid {ORANGE};
+}}
+
+QCheckBox#MicToggle {{
+    background-color: #232A33;
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 14px;
+    padding: 6px 12px;
+    font-weight: 700;
+}}
+
+QCheckBox#MicToggle[muted="false"] {{
+    color: {SUCCESS};
+}}
+
+QCheckBox#MicToggle[muted="true"] {{
+    color: {ORANGE};
 }}
 
 QTextEdit {{
