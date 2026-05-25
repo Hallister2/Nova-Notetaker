@@ -211,6 +211,9 @@ class CaptureWorker(QObject):
         self.service.stop()
         self.stopped.emit()
 
+    def request_stop(self) -> None:
+        self.service.request_stop()
+
 
 class ProcessingWorker(QObject):
     status = Signal(str)
@@ -256,6 +259,7 @@ class MainWindow(QMainWindow):
         self.nav_button_labels = ["Live Capture", "Meetings", "Logs", "Templates", "Settings"]
         self.compact_nav_labels = ["Live", "Meet", "Logs", "Tpl", "Set"]
         self.current_responsive_mode = ""
+        self.stop_requested = False
 
         self.setWindowTitle("Nova Notetaker")
         self.setMinimumSize(900, 620)
@@ -360,7 +364,7 @@ class MainWindow(QMainWindow):
 
         self.settings_button = QPushButton("Configure")
         self.settings_button.clicked.connect(self.open_settings)
-        self.new_meeting_button = QPushButton("+  New Meeting")
+        self.new_meeting_button = QPushButton("Start Recording")
         self.new_meeting_button.setObjectName("PrimaryButton")
         self.new_meeting_button.clicked.connect(self.start_capture)
         self.start_button = self.new_meeting_button
@@ -1112,7 +1116,9 @@ class MainWindow(QMainWindow):
         self.worker_thread.finished.connect(self.worker_thread.deleteLater)
         self.worker_thread.start()
 
+        self.stop_requested = False
         self.start_button.setEnabled(False)
+        self.start_button.setText("Recording")
         self.stop_button.setEnabled(True)
         self.settings_button.setEnabled(False)
         self.capture_mic_toggle.setEnabled(False)
@@ -1139,9 +1145,14 @@ class MainWindow(QMainWindow):
     def stop_capture(self) -> None:
         if not self.worker:
             return
+        if self.stop_requested:
+            return
+        self.stop_requested = True
         self.stop_button.setEnabled(False)
         self.status_label.setText("Stopping")
         self.orb_caption.setText("Finalizing capture")
+        self.log("Stop requested. Waiting for audio streams to close.")
+        self.worker.request_stop()
         self.request_worker_stop.emit()
 
     def _capture_finished(self) -> None:
@@ -1153,6 +1164,7 @@ class MainWindow(QMainWindow):
 
         self.worker = None
         self.worker_thread = None
+        self.stop_requested = False
         self.stop_button.setEnabled(False)
         self.orb.set_state("processing")
         self.status_label.setText("Processing")
@@ -1238,6 +1250,7 @@ class MainWindow(QMainWindow):
         self.processing_worker = None
         self.processing_thread = None
         self.start_button.setEnabled(True)
+        self.start_button.setText("Start Recording")
         self.stop_button.setEnabled(False)
         self.settings_button.setEnabled(True)
         self.capture_mic_toggle.setEnabled(True)

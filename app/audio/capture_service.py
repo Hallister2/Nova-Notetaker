@@ -65,13 +65,16 @@ class CaptureService:
         self._emit_status("Capture started")
 
     def stop(self) -> None:
-        self.stop_event.set()
+        self.request_stop()
         for thread in self.threads:
             thread.join(timeout=10)
             if thread.is_alive():
                 self._emit_status(f"Capture thread did not stop cleanly: {thread.name}")
         self._emit_status("Capture stopped")
         self.callbacks_enabled.clear()
+
+    def request_stop(self) -> None:
+        self.stop_event.set()
 
     def _emit_status(self, message: str) -> None:
         if not self.callbacks_enabled.is_set():
