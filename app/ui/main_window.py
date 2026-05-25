@@ -45,7 +45,7 @@ from app.core.settings import load_settings, save_settings
 from app.intelligence.insights import InsightItem, MeetingInsights, load_or_build_insights
 from app.storage.meeting_store import MeetingMetadata, MeetingStore
 from app.ui.orb_widget import OrbWidget
-from app.ui.styles import APP_STYLESHEET
+from app.ui.styles import THEME_LABELS, build_stylesheet
 from app.workflows.meeting_processor import MeetingProcessor
 
 
@@ -268,10 +268,14 @@ class MainWindow(QMainWindow):
         self.current_responsive_mode = ""
         self.stop_requested = False
         self.meeting_overview_windows: list[QDialog] = []
+        self.theme_buttons: dict[str, QPushButton] = {}
+        self.current_theme = self.settings.get("app", {}).get("theme", "executive_dark")
+        if self.current_theme not in THEME_LABELS:
+            self.current_theme = "executive_dark"
 
         self.setWindowTitle("Nova Notetaker")
         self.setMinimumSize(780, 560)
-        self.setStyleSheet(APP_STYLESHEET)
+        self.setStyleSheet(build_stylesheet(self.current_theme))
         self._resize_to_available_screen(preferred_width=1440, preferred_height=820)
 
         self.elapsed_timer = QTimer(self)
@@ -377,6 +381,8 @@ class MainWindow(QMainWindow):
         self.start_button = self.new_meeting_button
         header.addLayout(title_block)
         header.addStretch()
+        theme_toggle = self._build_theme_toggle()
+        header.addWidget(theme_toggle)
         header.addWidget(self.new_meeting_button)
         layout.addLayout(header)
 
@@ -398,6 +404,25 @@ class MainWindow(QMainWindow):
         main_grid.setColumnMinimumWidth(1, 380)
         layout.addLayout(main_grid, stretch=1)
         return page
+
+    def _build_theme_toggle(self) -> QWidget:
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        for theme_name, label in (
+            ("executive_dark", "Dark"),
+            ("clean_light", "Light"),
+            ("modern_gradient", "Colorful"),
+        ):
+            button = QPushButton(label)
+            button.setObjectName("ThemeButton")
+            button.setProperty("active", "false")
+            button.clicked.connect(lambda checked=False, selected=theme_name: self.set_theme(selected))
+            layout.addWidget(button)
+            self.theme_buttons[theme_name] = button
+        self._sync_theme_buttons()
+        return container
 
     def _build_meeting_status_card(self) -> QFrame:
         card = QFrame()
@@ -789,6 +814,23 @@ class MainWindow(QMainWindow):
         self.pages.setCurrentIndex(index)
         for button_index, button in enumerate(self.nav_buttons):
             button.setProperty("active", "true" if button_index == index else "false")
+            button.style().unpolish(button)
+            button.style().polish(button)
+
+    def set_theme(self, theme_name: str) -> None:
+        if theme_name not in THEME_LABELS:
+            theme_name = "executive_dark"
+        self.current_theme = theme_name
+        self.settings.setdefault("app", {})["theme"] = theme_name
+        save_settings(self.settings)
+        self.setStyleSheet(build_stylesheet(theme_name))
+        self._sync_theme_buttons()
+        for dialog in list(self.meeting_overview_windows):
+            dialog.setStyleSheet(build_stylesheet(theme_name))
+
+    def _sync_theme_buttons(self) -> None:
+        for theme_name, button in self.theme_buttons.items():
+            button.setProperty("active", "true" if theme_name == self.current_theme else "false")
             button.style().unpolish(button)
             button.style().polish(button)
 
@@ -1729,7 +1771,7 @@ class MainWindow(QMainWindow):
         dialog = QDialog()
         dialog.setAttribute(Qt.WA_DeleteOnClose, True)
         dialog.setWindowTitle(f"Nova Meeting Overview - {metadata.title or folder.name}")
-        dialog.setStyleSheet(APP_STYLESHEET)
+        dialog.setStyleSheet(build_stylesheet(self.current_theme))
         dialog.setMinimumSize(720, 520)
         self.meeting_overview_windows.append(dialog)
         dialog.destroyed.connect(lambda *_: self._forget_overview_window(dialog))

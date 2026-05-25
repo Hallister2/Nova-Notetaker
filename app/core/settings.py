@@ -11,7 +11,7 @@ SETTINGS_PATH = CONFIG_DIR / "settings.json"
 DEFAULT_SETTINGS: dict[str, Any] = {
     "app": {
         "name": "Nova Notetaker",
-        "theme": "nova_orange",
+        "theme": "executive_dark",
     },
     "audio": {
         "mic_device_name": "",

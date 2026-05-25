@@ -1,19 +1,83 @@
-ORANGE = "#FF8A1F"
-ORANGE_HOVER = "#FFA13D"
-APP_BACKGROUND = "#0F1216"
-SIDEBAR = "#14181E"
-PANEL = "#181D24"
-RAISED = "#1D232B"
-TEXT_PRIMARY = "#F4F6F8"
-TEXT_SECONDARY = "#AAB2BE"
-TEXT_MUTED = "#6F7782"
-SUCCESS = "#3DDC84"
-RECORDING = "#FF4D4D"
+THEME_LABELS = {
+    "executive_dark": "Executive Dark",
+    "clean_light": "Clean Professional",
+    "modern_gradient": "Modern Gradient",
+}
 
-APP_STYLESHEET = f"""
+
+THEMES = {
+    "executive_dark": {
+        "app": "#0F1216",
+        "sidebar": "#14181E",
+        "panel": "#181D24",
+        "raised": "#1D232B",
+        "field": "#151A20",
+        "text": "#F4F6F8",
+        "secondary": "#AAB2BE",
+        "muted": "#6F7782",
+        "border": "rgba(255, 255, 255, 0.07)",
+        "soft": "rgba(255, 255, 255, 0.035)",
+        "hover": "#242B35",
+        "orange": "#FF8A1F",
+        "orange_hover": "#FFA13D",
+        "success": "#3DDC84",
+        "recording": "#FF4D4D",
+        "primary_text": "#16100A",
+        "blue": "#69A7FF",
+        "badge": "#242B35",
+        "disabled": "#171B21",
+    },
+    "clean_light": {
+        "app": "#F6F8FB",
+        "sidebar": "#FFFFFF",
+        "panel": "#FFFFFF",
+        "raised": "#F1F4F8",
+        "field": "#FFFFFF",
+        "text": "#111827",
+        "secondary": "#4B5563",
+        "muted": "#7B8492",
+        "border": "rgba(17, 24, 39, 0.10)",
+        "soft": "rgba(17, 24, 39, 0.035)",
+        "hover": "#E9EEF5",
+        "orange": "#FF7A1A",
+        "orange_hover": "#FF8F33",
+        "success": "#0E9F6E",
+        "recording": "#E02424",
+        "primary_text": "#FFFFFF",
+        "blue": "#2563EB",
+        "badge": "#EEF2F7",
+        "disabled": "#EEF1F5",
+    },
+    "modern_gradient": {
+        "app": "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #080D24, stop:0.55 #121633, stop:1 #24143D)",
+        "sidebar": "rgba(14, 18, 45, 0.95)",
+        "panel": "rgba(20, 25, 58, 0.92)",
+        "raised": "rgba(32, 28, 72, 0.92)",
+        "field": "rgba(18, 23, 56, 0.94)",
+        "text": "#F8FAFF",
+        "secondary": "#B8C0D9",
+        "muted": "#818BA9",
+        "border": "rgba(255, 255, 255, 0.11)",
+        "soft": "rgba(255, 255, 255, 0.05)",
+        "hover": "rgba(52, 43, 105, 0.95)",
+        "orange": "#FF7A2F",
+        "orange_hover": "#FF9A4D",
+        "success": "#35E78A",
+        "recording": "#FF5B69",
+        "primary_text": "#140B05",
+        "blue": "#7AA7FF",
+        "badge": "rgba(39, 42, 87, 0.96)",
+        "disabled": "rgba(23, 28, 61, 0.95)",
+    },
+}
+
+
+def build_stylesheet(theme_name: str = "executive_dark") -> str:
+    t = THEMES.get(theme_name, THEMES["executive_dark"])
+    return f"""
 QWidget {{
-    background-color: {APP_BACKGROUND};
-    color: {TEXT_PRIMARY};
+    background-color: {t["app"]};
+    color: {t["text"]};
     font-family: Segoe UI;
     font-size: 13px;
 }}
@@ -23,110 +87,110 @@ QLabel {{
 }}
 
 QFrame#Sidebar {{
-    background-color: {SIDEBAR};
-    border-right: 1px solid rgba(255, 255, 255, 0.07);
+    background-color: {t["sidebar"]};
+    border-right: 1px solid {t["border"]};
 }}
 
 QFrame#Panel {{
-    background-color: {PANEL};
-    border: 1px solid rgba(255, 255, 255, 0.07);
+    background-color: {t["panel"]};
+    border: 1px solid {t["border"]};
     border-radius: 8px;
 }}
 
 QFrame#RaisedPanel {{
-    background-color: {RAISED};
-    border: 1px solid rgba(255, 255, 255, 0.07);
+    background-color: {t["raised"]};
+    border: 1px solid {t["border"]};
     border-radius: 8px;
 }}
 
 QFrame#TranscriptRow {{
     background-color: transparent;
     border: 0;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    border-bottom: 1px solid {t["border"]};
     border-radius: 0;
 }}
 
 QFrame#InsightItem {{
-    background-color: rgba(255, 255, 255, 0.025);
-    border: 1px solid rgba(255, 255, 255, 0.045);
+    background-color: {t["soft"]};
+    border: 1px solid {t["border"]};
     border-radius: 6px;
 }}
 
 QFrame#Footer {{
-    background-color: {SIDEBAR};
-    border-top: 1px solid rgba(255, 255, 255, 0.07);
+    background-color: {t["sidebar"]};
+    border-top: 1px solid {t["border"]};
 }}
 
 QWidget#OverviewRoot {{
-    background-color: {APP_BACKGROUND};
+    background-color: {t["app"]};
 }}
 
 QLabel#Title {{
-    color: {TEXT_PRIMARY};
+    color: {t["text"]};
     font-size: 24px;
     font-weight: 700;
 }}
 
 QLabel#Logo {{
-    color: {ORANGE};
+    color: {t["orange"]};
     font-size: 22px;
     font-weight: 700;
     letter-spacing: 5px;
 }}
 
 QLabel#LogoSub {{
-    color: {TEXT_PRIMARY};
+    color: {t["text"]};
     font-size: 11px;
     letter-spacing: 4px;
 }}
 
 QLabel#Subtitle {{
-    color: {TEXT_SECONDARY};
+    color: {t["secondary"]};
     font-size: 13px;
 }}
 
 QLabel#Muted {{
-    color: {TEXT_MUTED};
+    color: {t["muted"]};
     font-size: 12px;
 }}
 
 QLabel#SectionTitle {{
-    color: {TEXT_SECONDARY};
+    color: {t["secondary"]};
     font-size: 12px;
     font-weight: 600;
     text-transform: uppercase;
 }}
 
 QLabel#StatValue {{
-    color: {TEXT_PRIMARY};
+    color: {t["text"]};
     font-size: 20px;
     font-weight: 700;
 }}
 
 QLabel#OrangeText {{
-    color: {ORANGE};
+    color: {t["orange"]};
     font-weight: 700;
 }}
 
 QLabel#BlueText {{
-    color: #69A7FF;
+    color: {t["blue"]};
     font-weight: 700;
 }}
 
 QLabel#GreenText {{
-    color: {SUCCESS};
+    color: {t["success"]};
     font-weight: 700;
 }}
 
 QLabel#RedText {{
-    color: {RECORDING};
+    color: {t["recording"]};
     font-weight: 700;
 }}
 
 QLabel#Badge {{
-    background-color: #242B35;
-    color: {TEXT_SECONDARY};
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background-color: {t["badge"]};
+    color: {t["secondary"]};
+    border: 1px solid {t["border"]};
     border-radius: 7px;
     padding: 2px 7px;
     font-size: 11px;
@@ -135,50 +199,45 @@ QLabel#Badge {{
 
 QLabel#InsightItemTitle {{
     background-color: transparent;
-    color: {TEXT_PRIMARY};
+    color: {t["text"]};
     font-size: 12px;
 }}
 
 QLabel#Badge[kind="confidence-high"] {{
-    background-color: #12301F;
-    color: {SUCCESS};
+    background-color: rgba(61, 220, 132, 0.14);
+    color: {t["success"]};
 }}
 
 QLabel#Badge[kind="confidence-medium"] {{
-    background-color: #322705;
-    color: #FACC15;
+    background-color: rgba(250, 204, 21, 0.16);
+    color: #D49100;
 }}
 
 QLabel#Badge[kind="confidence-low"] {{
-    background-color: #341111;
-    color: #FB7185;
+    background-color: rgba(251, 113, 133, 0.15);
+    color: #FB5470;
 }}
 
 QLabel#Badge[kind="date"] {{
-    background-color: #352407;
-    color: #FFCF70;
-}}
-
-QLabel#Badge[kind="source"] {{
-    background-color: #102A3A;
-    color: #7DD3FC;
+    background-color: rgba(255, 138, 31, 0.15);
+    color: {t["orange"]};
 }}
 
 QLabel#Badge[kind="state"] {{
     background-color: rgba(255, 138, 31, 0.14);
-    color: {ORANGE};
+    color: {t["orange"]};
 }}
 
 QLineEdit, QComboBox, QSpinBox {{
-    background-color: {RAISED};
-    color: {TEXT_PRIMARY};
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background-color: {t["field"]};
+    color: {t["text"]};
+    border: 1px solid {t["border"]};
     border-radius: 6px;
     padding: 8px 10px;
 }}
 
 QLineEdit:focus, QComboBox:hover, QSpinBox:hover {{
-    border: 1px solid rgba(255, 138, 31, 0.45);
+    border: 1px solid rgba(255, 138, 31, 0.55);
 }}
 
 QComboBox::drop-down {{
@@ -187,47 +246,41 @@ QComboBox::drop-down {{
 }}
 
 QPushButton {{
-    background-color: {RAISED};
-    color: {TEXT_PRIMARY};
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background-color: {t["raised"]};
+    color: {t["text"]};
+    border: 1px solid {t["border"]};
     border-radius: 7px;
     padding: 9px 14px;
     font-weight: 600;
 }}
 
 QPushButton:hover {{
-    background-color: #242B35;
-    border: 1px solid rgba(255, 255, 255, 0.13);
+    background-color: {t["hover"]};
+    border: 1px solid rgba(255, 138, 31, 0.24);
 }}
 
 QPushButton:pressed {{
-    background-color: #28313C;
+    background-color: {t["badge"]};
 }}
 
 QPushButton:disabled {{
-    color: {TEXT_MUTED};
-    background-color: #171B21;
+    color: {t["muted"]};
+    background-color: {t["disabled"]};
 }}
 
-QPushButton#PrimaryButton {{
-    background-color: {ORANGE};
-    color: #16100A;
-    border: 1px solid rgba(255, 161, 61, 0.8);
+QPushButton#PrimaryButton, QPushButton#DangerButton {{
+    background-color: {t["orange"]};
+    color: {t["primary_text"]};
+    border: 1px solid {t["orange_hover"]};
 }}
 
-QPushButton#PrimaryButton:hover {{
-    background-color: {ORANGE_HOVER};
-}}
-
-QPushButton#DangerButton {{
-    background-color: {ORANGE};
-    color: #16100A;
-    border: 1px solid rgba(255, 161, 61, 0.8);
+QPushButton#PrimaryButton:hover, QPushButton#DangerButton:hover {{
+    background-color: {t["orange_hover"]};
 }}
 
 QPushButton#TableActionButton {{
     background-color: rgba(255, 138, 31, 0.16);
-    color: {ORANGE};
+    color: {t["orange"]};
     border: 1px solid rgba(255, 138, 31, 0.55);
     border-radius: 6px;
     padding: 5px 10px;
@@ -235,23 +288,38 @@ QPushButton#TableActionButton {{
 }}
 
 QPushButton#TableActionButton:hover {{
-    background-color: {ORANGE};
-    color: #16100A;
-    border: 1px solid {ORANGE_HOVER};
+    background-color: {t["orange"]};
+    color: {t["primary_text"]};
+    border: 1px solid {t["orange_hover"]};
 }}
 
 QPushButton#SubtleActionButton {{
-    background-color: rgba(255, 255, 255, 0.04);
-    color: {TEXT_SECONDARY};
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background-color: {t["soft"]};
+    color: {t["secondary"]};
+    border: 1px solid {t["border"]};
     border-radius: 6px;
     padding: 4px 8px;
     font-size: 11px;
 }}
 
+QPushButton#ThemeButton {{
+    background-color: {t["raised"]};
+    color: {t["secondary"]};
+    border: 1px solid {t["border"]};
+    border-radius: 7px;
+    padding: 7px 10px;
+    font-weight: 700;
+}}
+
+QPushButton#ThemeButton[active="true"] {{
+    background-color: rgba(255, 138, 31, 0.18);
+    color: {t["orange"]};
+    border: 1px solid rgba(255, 138, 31, 0.62);
+}}
+
 QPushButton#SidebarButton {{
     background-color: transparent;
-    color: {TEXT_SECONDARY};
+    color: {t["secondary"]};
     border: 0;
     border-left: 3px solid transparent;
     border-radius: 6px;
@@ -261,65 +329,65 @@ QPushButton#SidebarButton {{
 }}
 
 QPushButton#SidebarButton:hover {{
-    background-color: rgba(255, 255, 255, 0.04);
-    color: {TEXT_PRIMARY};
+    background-color: {t["soft"]};
+    color: {t["text"]};
 }}
 
 QPushButton#SidebarButton[active="true"] {{
-    background-color: {RAISED};
-    color: {TEXT_PRIMARY};
-    border-left: 3px solid {ORANGE};
+    background-color: {t["raised"]};
+    color: {t["text"]};
+    border-left: 3px solid {t["orange"]};
 }}
 
 QCheckBox {{
     background-color: transparent;
-    color: {TEXT_PRIMARY};
+    color: {t["text"]};
     spacing: 8px;
 }}
 
 QCheckBox::indicator {{
     background-color: transparent;
-    border: 1px solid rgba(255, 255, 255, 0.35);
+    border: 1px solid {t["border"]};
     border-radius: 4px;
     width: 15px;
     height: 15px;
 }}
 
 QCheckBox::indicator:checked {{
-    background-color: {ORANGE};
-    border: 1px solid {ORANGE};
+    background-color: {t["orange"]};
+    border: 1px solid {t["orange"]};
 }}
 
 QCheckBox#MicToggle {{
-    background-color: #232A33;
-    border: 1px solid rgba(255, 255, 255, 0.10);
+    background-color: {t["raised"]};
+    border: 1px solid {t["border"]};
     border-radius: 14px;
     padding: 6px 12px;
     font-weight: 700;
 }}
 
 QCheckBox#MicToggle[muted="false"] {{
-    color: {SUCCESS};
+    color: {t["success"]};
 }}
 
 QCheckBox#MicToggle[muted="true"] {{
-    color: {ORANGE};
+    color: {t["orange"]};
 }}
 
 QTextEdit {{
-    background-color: #151A20;
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    background-color: {t["field"]};
+    border: 1px solid {t["border"]};
     border-radius: 8px;
-    color: {TEXT_PRIMARY};
+    color: {t["text"]};
     padding: 10px;
 }}
 
 QTableWidget {{
-    background-color: #151A20;
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    background-color: {t["field"]};
+    border: 1px solid {t["border"]};
     border-radius: 8px;
-    gridline-color: rgba(255, 255, 255, 0.05);
-    selection-background-color: rgba(255, 138, 31, 0.18);
+    gridline-color: {t["border"]};
+    selection-background-color: rgba(255, 138, 31, 0.22);
 }}
 
 QTableWidget::item {{
@@ -327,21 +395,21 @@ QTableWidget::item {{
 }}
 
 QTableWidget::item:selected {{
-    background-color: rgba(255, 138, 31, 0.18);
-    color: {TEXT_PRIMARY};
+    background-color: rgba(255, 138, 31, 0.22);
+    color: {t["text"]};
 }}
 
 QHeaderView::section {{
-    background-color: {RAISED};
-    color: {TEXT_SECONDARY};
+    background-color: {t["raised"]};
+    color: {t["secondary"]};
     border: 0;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    border-bottom: 1px solid {t["border"]};
     padding: 8px;
     font-weight: 600;
 }}
 
 QProgressBar {{
-    background-color: #272D35;
+    background-color: {t["raised"]};
     border: 0;
     border-radius: 4px;
     height: 8px;
@@ -349,7 +417,7 @@ QProgressBar {{
 }}
 
 QProgressBar::chunk {{
-    background-color: {ORANGE};
+    background-color: {t["orange"]};
     border-radius: 4px;
 }}
 
@@ -360,7 +428,7 @@ QScrollBar:vertical {{
 }}
 
 QScrollBar::handle:vertical {{
-    background: {ORANGE};
+    background: {t["orange"]};
     border-radius: 4px;
     min-height: 36px;
 }}
@@ -379,6 +447,9 @@ QScrollArea > QWidget > QWidget {{
 }}
 
 QDialog {{
-    background-color: {APP_BACKGROUND};
+    background-color: {t["app"]};
 }}
 """
+
+
+APP_STYLESHEET = build_stylesheet("executive_dark")
