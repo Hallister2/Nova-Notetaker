@@ -1,0 +1,33 @@
+{
+  "app": {
+    "name": "Nova Notetaker",
+    "theme": "nova_orange"
+  },
+  "audio": {
+    "mic_device_name": "Microphone Array on SoundWire Device (2- Realtek XU)",
+    "system_loopback_device_name": "Speakers (4- Realtek XU) [Loopback]",
+    "capture_mic": false,
+    "capture_profile": "laptop_speakers",
+    "sample_rate": 16000,
+    "channels": 1
+  },
+  "ai": {
+    "provider": "ollama",
+    "ollama_url": "http://192.168.200.2:11434",
+    "ollama_model": "llama3.1:latest",
+    "openai_model": "gpt-5.2",
+    "timeout_seconds": 180
+  },
+  "transcription": {
+    "enabled": true,
+    "whisperlive_url": "http://192.168.200.2:9090",
+    "model": "small",
+    "language": "en",
+    "use_vad": true,
+    "cross_bleed_cleanup": true,
+    "timeout_seconds": 120
+  },
+  "storage": {
+    "meetings_dir": "meetings"
+  }
+}

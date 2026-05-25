@@ -1,0 +1,8 @@
+PySide6>=6.7.0
+numpy>=1.26.0
+sounddevice>=0.4.7
+soundfile>=0.12.1
+pyaudiowpatch>=0.2.12
+requests>=2.32.0
+python-dotenv>=1.0.1
+websocket-client>=1.8.0
