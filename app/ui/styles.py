@@ -1,151 +1,288 @@
-ORANGE = "#ff8a1f"
-ORANGE_HOT = "#ffb347"
-TEXT_MAIN = "#fff1df"
-TEXT_MUTED = "#d8a36d"
-TEXT_DIM = "#9a6a3a"
+ORANGE = "#FF8A1F"
+ORANGE_HOVER = "#FFA13D"
+APP_BACKGROUND = "#0F1216"
+SIDEBAR = "#14181E"
+PANEL = "#181D24"
+RAISED = "#1D232B"
+TEXT_PRIMARY = "#F4F6F8"
+TEXT_SECONDARY = "#AAB2BE"
+TEXT_MUTED = "#6F7782"
+SUCCESS = "#3DDC84"
+RECORDING = "#FF4D4D"
 
 APP_STYLESHEET = f"""
 QWidget {{
-    background-color: #020100;
-    color: {TEXT_MAIN};
+    background-color: {APP_BACKGROUND};
+    color: {TEXT_PRIMARY};
     font-family: Segoe UI;
+    font-size: 13px;
+}}
+
+QLabel {{
+    background-color: transparent;
+}}
+
+QFrame#Sidebar {{
+    background-color: {SIDEBAR};
+    border-right: 1px solid rgba(255, 255, 255, 0.07);
 }}
 
 QFrame#Panel {{
-    background-color: rgba(6, 3, 1, 165);
-    border: 1px solid rgba(255, 138, 31, 38);
-    border-radius: 18px;
+    background-color: {PANEL};
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 8px;
+}}
+
+QFrame#RaisedPanel {{
+    background-color: {RAISED};
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 8px;
+}}
+
+QFrame#TranscriptRow {{
+    background-color: transparent;
+    border: 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 0;
+}}
+
+QFrame#Footer {{
+    background-color: {SIDEBAR};
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
 }}
 
 QLabel#Title {{
+    color: {TEXT_PRIMARY};
+    font-size: 24px;
+    font-weight: 700;
+}}
+
+QLabel#Logo {{
     color: {ORANGE};
-    font-size: 30px;
-    letter-spacing: 7px;
-    font-weight: 600;
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: 5px;
+}}
+
+QLabel#LogoSub {{
+    color: {TEXT_PRIMARY};
+    font-size: 11px;
+    letter-spacing: 4px;
 }}
 
 QLabel#Subtitle {{
+    color: {TEXT_SECONDARY};
+    font-size: 13px;
+}}
+
+QLabel#Muted {{
     color: {TEXT_MUTED};
-    font-size: 11px;
-    letter-spacing: 3px;
+    font-size: 12px;
 }}
 
 QLabel#SectionTitle {{
-    color: #ff9f2e;
-    font-size: 11px;
-    letter-spacing: 2px;
+    color: {TEXT_SECONDARY};
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+}}
+
+QLabel#StatValue {{
+    color: {TEXT_PRIMARY};
+    font-size: 20px;
+    font-weight: 700;
+}}
+
+QLabel#OrangeText {{
+    color: {ORANGE};
+    font-weight: 700;
+}}
+
+QLabel#BlueText {{
+    color: #69A7FF;
+    font-weight: 700;
+}}
+
+QLabel#GreenText {{
+    color: {SUCCESS};
+    font-weight: 700;
+}}
+
+QLabel#RedText {{
+    color: {RECORDING};
+    font-weight: 700;
 }}
 
 QLineEdit, QComboBox, QSpinBox {{
-    background-color: rgba(8, 4, 1, 190);
-    color: {TEXT_MAIN};
-    border: 1px solid rgba(255, 138, 31, 75);
-    border-radius: 10px;
+    background-color: {RAISED};
+    color: {TEXT_PRIMARY};
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
     padding: 8px 10px;
-    font-size: 13px;
 }}
 
 QLineEdit:focus, QComboBox:hover, QSpinBox:hover {{
-    border: 1px solid rgba(255, 179, 71, 210);
-    background-color: rgba(18, 8, 2, 220);
+    border: 1px solid rgba(255, 138, 31, 0.45);
 }}
 
-QTabWidget::pane {{
-    border: 1px solid rgba(255, 138, 31, 32);
-    border-radius: 12px;
-    top: -1px;
-}}
-
-QTabBar::tab {{
-    background-color: rgba(8, 4, 1, 170);
-    color: {TEXT_MUTED};
-    border: 1px solid rgba(255, 138, 31, 45);
-    padding: 8px 18px;
-    margin-right: 4px;
-}}
-
-QTabBar::tab:selected {{
-    color: {TEXT_MAIN};
-    border: 1px solid rgba(255, 179, 71, 150);
-}}
-
-QListWidget, QTableWidget {{
-    background-color: rgba(2, 1, 0, 140);
-    border: 1px solid rgba(255, 138, 31, 28);
-    border-radius: 12px;
-    padding: 6px;
-}}
-
-QListWidget::item {{
-    padding: 8px;
-}}
-
-QListWidget::item:selected {{
-    background-color: rgba(255, 138, 31, 45);
-    color: {TEXT_MAIN};
-}}
-
-QTableWidget::item {{
-    padding: 6px;
-}}
-
-QTableWidget::item:selected {{
-    background-color: rgba(255, 138, 31, 45);
-    color: {TEXT_MAIN};
-}}
-
-QHeaderView::section {{
-    background-color: rgba(8, 4, 1, 220);
-    color: {TEXT_MUTED};
-    border: 1px solid rgba(255, 138, 31, 35);
-    padding: 7px;
-}}
-
-QCheckBox {{
-    color: {TEXT_MAIN};
+QComboBox::drop-down {{
+    border: 0;
+    width: 24px;
 }}
 
 QPushButton {{
-    background-color: rgba(8, 4, 1, 170);
-    color: {TEXT_MAIN};
-    border: 1px solid rgba(255, 138, 31, 90);
-    border-radius: 11px;
+    background-color: {RAISED};
+    color: {TEXT_PRIMARY};
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 7px;
     padding: 9px 14px;
-    font-size: 13px;
-    letter-spacing: 1px;
+    font-weight: 600;
 }}
 
 QPushButton:hover {{
-    background-color: rgba(30, 12, 2, 220);
-    border: 1px solid rgba(255, 179, 71, 220);
+    background-color: #242B35;
+    border: 1px solid rgba(255, 255, 255, 0.13);
 }}
 
 QPushButton:pressed {{
-    background-color: rgba(75, 28, 4, 230);
+    background-color: #28313C;
 }}
 
 QPushButton:disabled {{
-    color: rgba(216, 163, 109, 90);
-    border: 1px solid rgba(255, 138, 31, 25);
+    color: {TEXT_MUTED};
+    background-color: #171B21;
+}}
+
+QPushButton#PrimaryButton {{
+    background-color: {ORANGE};
+    color: #16100A;
+    border: 1px solid rgba(255, 161, 61, 0.8);
+}}
+
+QPushButton#PrimaryButton:hover {{
+    background-color: {ORANGE_HOVER};
+}}
+
+QPushButton#DangerButton {{
+    background-color: {ORANGE};
+    color: #16100A;
+    border: 1px solid rgba(255, 161, 61, 0.8);
+}}
+
+QPushButton#SidebarButton {{
+    background-color: transparent;
+    color: {TEXT_SECONDARY};
+    border: 0;
+    border-left: 3px solid transparent;
+    border-radius: 6px;
+    padding: 11px 14px;
+    text-align: left;
+    font-weight: 500;
+}}
+
+QPushButton#SidebarButton:hover {{
+    background-color: rgba(255, 255, 255, 0.04);
+    color: {TEXT_PRIMARY};
+}}
+
+QPushButton#SidebarButton[active="true"] {{
+    background-color: {RAISED};
+    color: {TEXT_PRIMARY};
+    border-left: 3px solid {ORANGE};
+}}
+
+QCheckBox {{
+    background-color: transparent;
+    color: {TEXT_PRIMARY};
+    spacing: 8px;
+}}
+
+QCheckBox::indicator {{
+    background-color: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    border-radius: 4px;
+    width: 15px;
+    height: 15px;
+}}
+
+QCheckBox::indicator:checked {{
+    background-color: {ORANGE};
+    border: 1px solid {ORANGE};
 }}
 
 QTextEdit {{
-    background-color: rgba(2, 1, 0, 140);
-    border: 1px solid rgba(255, 138, 31, 28);
-    border-radius: 14px;
-    color: {TEXT_MAIN};
+    background-color: #151A20;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 8px;
+    color: {TEXT_PRIMARY};
     padding: 10px;
 }}
 
-QProgressBar {{
-    background-color: rgba(8, 4, 1, 120);
-    border: 1px solid rgba(255, 138, 31, 30);
+QTableWidget {{
+    background-color: #151A20;
+    border: 1px solid rgba(255, 255, 255, 0.06);
     border-radius: 8px;
-    height: 12px;
+    gridline-color: rgba(255, 255, 255, 0.05);
+    selection-background-color: rgba(255, 138, 31, 0.18);
+}}
+
+QTableWidget::item {{
+    padding: 7px;
+}}
+
+QTableWidget::item:selected {{
+    background-color: rgba(255, 138, 31, 0.18);
+    color: {TEXT_PRIMARY};
+}}
+
+QHeaderView::section {{
+    background-color: {RAISED};
+    color: {TEXT_SECONDARY};
+    border: 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    padding: 8px;
+    font-weight: 600;
+}}
+
+QProgressBar {{
+    background-color: #272D35;
+    border: 0;
+    border-radius: 4px;
+    height: 8px;
+    text-align: center;
 }}
 
 QProgressBar::chunk {{
     background-color: {ORANGE};
-    border-radius: 8px;
+    border-radius: 4px;
+}}
+
+QScrollBar:vertical {{
+    background: transparent;
+    width: 10px;
+    margin: 4px 2px 4px 2px;
+}}
+
+QScrollBar::handle:vertical {{
+    background: {ORANGE};
+    border-radius: 4px;
+    min-height: 36px;
+}}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+    height: 0;
+}}
+
+QScrollArea {{
+    background-color: transparent;
+    border: 0;
+}}
+
+QScrollArea > QWidget > QWidget {{
+    background-color: transparent;
+}}
+
+QDialog {{
+    background-color: {APP_BACKGROUND};
 }}
 """
