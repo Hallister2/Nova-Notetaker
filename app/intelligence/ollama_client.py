@@ -5,6 +5,8 @@ from typing import Any
 
 import requests
 
+from app.intelligence.note_hints import build_note_hints
+
 
 @dataclass
 class NotesResult:
@@ -66,6 +68,8 @@ class OllamaClient:
 
     @staticmethod
     def _build_prompt(transcript: str) -> str:
+        hints = build_note_hints(transcript)
+        hint_block = f"\n\n{hints}\n" if hints else ""
         return (
             "You are Nova Notetaker. Convert this meeting transcript into clean Markdown notes.\n"
             "Return only Markdown notes. Do not include an introduction, explanation, or duplicate title.\n"
@@ -94,6 +98,7 @@ class OllamaClient:
             "Follow-ups are only broad next steps without a clear owner.\n\n"
             "Important date format:\n"
             "- Date: <date>; Context: <what it refers to>; Source: <You or Meeting>; Confidence: <High, Medium, or Low>\n\n"
+            f"{hint_block}"
             f"Transcript:\n{transcript}"
         )
 

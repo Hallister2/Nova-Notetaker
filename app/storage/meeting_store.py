@@ -65,11 +65,12 @@ class MeetingStore:
     def write_notes(self, folder: Path, metadata: MeetingMetadata, notes: str, transcript_path: Path, warnings: list[str]) -> Path:
         path = folder / "notes.md"
         warning_block = self._format_warnings(warnings)
+        notes = self._highlight_notes(notes.strip())
         path.write_text(
             f"# {metadata.title or 'Untitled Meeting'}\n\n"
             f"Started: {metadata.started_at}\n\n"
             f"Transcript: `{transcript_path.name}`\n\n"
-            f"{notes.strip()}\n"
+            f"{notes}\n"
             f"{warning_block}",
             encoding="utf-8",
         )
@@ -108,6 +109,40 @@ class MeetingStore:
         lines.extend(f"- {warning}" for warning in warnings)
         lines.append("")
         return "\n".join(lines)
+
+    @classmethod
+    def _highlight_notes(cls, notes: str) -> str:
+        highlighted_lines = []
+        for line in notes.splitlines():
+            highlighted_lines.append(cls._highlight_note_line(line))
+        return "\n".join(highlighted_lines).strip()
+
+    @classmethod
+    def _highlight_note_line(cls, line: str) -> str:
+        line = re.sub(r"\bSource:\s*([^;]+)", lambda match: f"Source: {cls._source_badge(match.group(1).strip())}", line)
+        line = re.sub(r"\bConfidence:\s*(High|Medium|Low)\b", lambda match: f"Confidence: {cls._confidence_badge(match.group(1))}", line, flags=re.IGNORECASE)
+        line = re.sub(r"\bDue:\s*([^;]+)", lambda match: f"Due: {cls._date_badge(match.group(1).strip())}", line)
+        line = re.sub(r"\bDate:\s*([^;]+)", lambda match: f"Date: {cls._date_badge(match.group(1).strip())}", line)
+        return line
+
+    @staticmethod
+    def _source_badge(value: str) -> str:
+        color = "#7dd3fc" if value.lower().startswith("meeting") else "#c4b5fd"
+        return f'<span style="color:{color};font-weight:700;">{value}</span>'
+
+    @staticmethod
+    def _confidence_badge(value: str) -> str:
+        colors = {
+            "high": ("#0f2f1f", "#4ade80"),
+            "medium": ("#3a2a05", "#facc15"),
+            "low": ("#3b1111", "#fb7185"),
+        }
+        background, foreground = colors.get(value.lower(), ("#262626", "#e5e7eb"))
+        return f'<span style="background-color:{background};color:{foreground};font-weight:700;padding:1px 6px;border-radius:6px;">{value}</span>'
+
+    @staticmethod
+    def _date_badge(value: str) -> str:
+        return f'<span style="background-color:#3b2a00;color:#ffcf70;font-weight:700;padding:1px 6px;border-radius:6px;">{value}</span>'
 
     @staticmethod
     def _slugify(text: str) -> str:

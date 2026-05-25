@@ -27,7 +27,7 @@ class MeetingProcessor:
         self.meeting_store = meeting_store or MeetingStore()
         self.settings = settings
 
-    def process(self, folder: Path, metadata: MeetingMetadata, on_status: StatusCallback) -> ProcessingResult:
+    def process(self, folder: Path, metadata: MeetingMetadata, on_status: StatusCallback, mode: str = "full") -> ProcessingResult:
         settings = self.settings or load_settings()
         warnings: list[str] = []
 
@@ -55,38 +55,49 @@ class MeetingProcessor:
                 warnings.append(warning)
                 on_status(warning)
 
-        on_status("Preparing transcript")
-        transcriber = WhisperLiveClient(settings)
-        transcript_results: list[TranscriptionResult] = []
-        if not mic_capture_enabled:
-            transcript_results.append(TranscriptionResult("You", "", False, None))
-        elif mic_info.valid:
-            transcript_results.append(transcriber.transcribe_file(folder / "mic.wav", "You"))
+        if system_info.valid and system_info.duration_seconds >= 10 and system_info.rms_level < 0.001:
+            warning = "System audio appears very quiet; confirm the selected output device is correct."
+            warnings.append(warning)
+            on_status(warning)
+
+        transcript_path = folder / "transcript.md"
+        if mode == "notes_only" and transcript_path.exists():
+            on_status("Using existing transcript")
+            transcript_text = transcript_path.read_text(encoding="utf-8")
+            has_transcript = "_Transcript pending._" not in transcript_text
         else:
-            transcript_results.append(TranscriptionResult("You", "", False, "Skipping mic transcription because mic.wav is invalid."))
+            on_status("Preparing transcript")
+            transcriber = WhisperLiveClient(settings)
+            transcript_results: list[TranscriptionResult] = []
+            if not mic_capture_enabled:
+                transcript_results.append(TranscriptionResult("You", "", False, None))
+            elif mic_info.valid:
+                transcript_results.append(transcriber.transcribe_file(folder / "mic.wav", "You"))
+            else:
+                transcript_results.append(TranscriptionResult("You", "", False, "Skipping mic transcription because mic.wav is invalid."))
 
-        if system_info.valid:
-            transcript_results.append(transcriber.transcribe_file(folder / "system.wav", "Meeting"))
-        else:
-            transcript_results.append(
-                TranscriptionResult("Meeting", "", False, "Skipping meeting-audio transcription because system.wav is invalid.")
-            )
+            if system_info.valid:
+                transcript_results.append(transcriber.transcribe_file(folder / "system.wav", "Meeting"))
+            else:
+                transcript_results.append(
+                    TranscriptionResult("Meeting", "", False, "Skipping meeting-audio transcription because system.wav is invalid.")
+                )
 
-        for result in transcript_results:
-            if result.warning:
-                warnings.append(result.warning)
-                on_status(result.warning)
+            for result in transcript_results:
+                if result.warning:
+                    warnings.append(result.warning)
+                    on_status(result.warning)
 
-        if settings.get("transcription", {}).get("cross_bleed_cleanup", True):
-            capture_profile = metadata.capture_profile or str(settings.get("audio", {}).get("capture_profile", "external_mic_speakers"))
-            transcript_results, cleanup_warnings = reduce_cross_bleed_for_profile(transcript_results, capture_profile)
-            for warning in cleanup_warnings:
-                warnings.append(warning)
-                on_status(warning)
+            if settings.get("transcription", {}).get("cross_bleed_cleanup", True):
+                capture_profile = metadata.capture_profile or str(settings.get("audio", {}).get("capture_profile", "external_mic_speakers"))
+                transcript_results, cleanup_warnings = reduce_cross_bleed_for_profile(transcript_results, capture_profile)
+                for warning in cleanup_warnings:
+                    warnings.append(warning)
+                    on_status(warning)
 
-        transcript_text = self._format_transcript(transcript_results, warnings)
-        transcript_path = self.meeting_store.write_transcript(folder, transcript_text)
-        has_transcript = any(result.success and result.text.strip() for result in transcript_results)
+            transcript_text = self._format_transcript(transcript_results, warnings)
+            transcript_path = self.meeting_store.write_transcript(folder, transcript_text)
+            has_transcript = any(result.success and result.text.strip() for result in transcript_results)
 
         notes_path = folder / "notes.md"
         if not has_transcript:
@@ -114,6 +125,7 @@ class MeetingProcessor:
             "transcript_path": str(transcript_path),
             "notes_path": str(notes_path),
             "warnings": warnings,
+            "mode": mode,
         }
         metadata.status = "processed_with_warnings" if warnings else "processed"
         self.meeting_store.write_metadata(folder, metadata)

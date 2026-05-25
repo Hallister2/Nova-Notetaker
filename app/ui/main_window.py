@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot
+from PySide6.QtGui import QTextDocument
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -21,6 +22,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QAbstractItemView,
+    QRadioButton,
     QPushButton,
     QProgressBar,
     QSpinBox,
@@ -169,6 +171,26 @@ class SettingsDialog(QDialog):
                 return
 
 
+class ReprocessDialog(QDialog):
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Reprocess Meeting")
+        layout = QVBoxLayout(self)
+        self.notes_only = QRadioButton("Regenerate notes only")
+        self.notes_only.setChecked(True)
+        self.full = QRadioButton("Full reprocess: transcribe audio and regenerate notes")
+        layout.addWidget(self.notes_only)
+        layout.addWidget(self.full)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    @property
+    def mode(self) -> str:
+        return "full" if self.full.isChecked() else "notes_only"
+
+
 class CaptureWorker(QObject):
     status = Signal(str)
     level = Signal(str, float)
@@ -192,15 +214,16 @@ class ProcessingWorker(QObject):
     status = Signal(str)
     finished = Signal()
 
-    def __init__(self, folder: Path, metadata: MeetingMetadata) -> None:
+    def __init__(self, folder: Path, metadata: MeetingMetadata, mode: str = "full") -> None:
         super().__init__()
         self.folder = folder
         self.metadata = metadata
+        self.mode = mode
 
     @Slot()
     def process(self) -> None:
         try:
-            MeetingProcessor().process(self.folder, self.metadata, self.status.emit)
+            MeetingProcessor().process(self.folder, self.metadata, self.status.emit, mode=self.mode)
         except Exception as error:
             self.status.emit(f"Post-processing failed: {error}")
         finally:
@@ -225,6 +248,7 @@ class MainWindow(QMainWindow):
         self.microphones: list[AudioDevice] = []
         self.loopbacks: list[AudioDevice] = []
         self.active_preview_file = "notes.md"
+        self.processing_mode = "full"
 
         self.setWindowTitle("Nova Notetaker")
         self.setMinimumSize(980, 640)
@@ -267,6 +291,8 @@ class MainWindow(QMainWindow):
         self.meeting_title = QLineEdit()
         self.meeting_title.setPlaceholderText("Meeting title")
         self.meeting_title.setText("Teams Meeting")
+        self.detect_title_button = QPushButton("DETECT TITLE")
+        self.detect_title_button.clicked.connect(self.detect_active_window_title)
 
         self.capture_mic_toggle = QCheckBox("Capture microphone")
         self.capture_mic_toggle.setChecked(bool(self.settings["audio"].get("capture_mic", True)))
@@ -299,6 +325,7 @@ class MainWindow(QMainWindow):
         capture_layout.addWidget(capture_title)
         capture_layout.addWidget(QLabel("Meeting Title"))
         capture_layout.addWidget(self.meeting_title)
+        capture_layout.addWidget(self.detect_title_button)
         capture_layout.addWidget(self.capture_mic_toggle)
         capture_layout.addWidget(self.settings_summary)
         capture_layout.addSpacing(8)
@@ -363,9 +390,12 @@ class MainWindow(QMainWindow):
         self.reprocess_button.clicked.connect(self.reprocess_selected_meeting)
         self.open_folder_button = QPushButton("OPEN FOLDER")
         self.open_folder_button.clicked.connect(self.open_selected_meeting_folder)
+        self.export_html_button = QPushButton("EXPORT HTML")
+        self.export_html_button.clicked.connect(self.export_selected_notes_html)
         archive_buttons.addWidget(self.refresh_meetings_button)
         archive_buttons.addWidget(self.reprocess_button)
         archive_buttons.addWidget(self.open_folder_button)
+        archive_buttons.addWidget(self.export_html_button)
         self.archive_status = QLabel("Ready")
         self.archive_status.setObjectName("Subtitle")
         meetings_panel_layout.addWidget(meetings_title)
@@ -532,7 +562,7 @@ class MainWindow(QMainWindow):
         self.orb_caption.setText("GENERATING NOTES")
 
         if self.metadata and self.meeting_folder:
-            self._start_processing(self.meeting_folder, self.metadata)
+            self._start_processing(self.meeting_folder, self.metadata, mode="full")
         else:
             self._processing_finished()
 
@@ -592,9 +622,10 @@ class MainWindow(QMainWindow):
                 return label
         return profile or "Unknown"
 
-    def _start_processing(self, folder: Path, metadata: MeetingMetadata) -> None:
+    def _start_processing(self, folder: Path, metadata: MeetingMetadata, mode: str = "full") -> None:
+        self.processing_mode = mode
         self.processing_thread = QThread(self)
-        self.processing_worker = ProcessingWorker(folder, metadata)
+        self.processing_worker = ProcessingWorker(folder, metadata, mode=mode)
         self.processing_worker.moveToThread(self.processing_thread)
         self.processing_thread.started.connect(self.processing_worker.process)
         self.processing_worker.status.connect(self.log)
@@ -617,6 +648,8 @@ class MainWindow(QMainWindow):
             self.refresh_meetings_button.setEnabled(True)
         if hasattr(self, "open_folder_button"):
             self.open_folder_button.setEnabled(True)
+        if hasattr(self, "export_html_button"):
+            self.export_html_button.setEnabled(True)
         self.orb.set_state("idle")
         self.status_label.setText("● READY")
         self.orb_caption.setText("SYSTEM IDLE")
@@ -679,7 +712,11 @@ class MainWindow(QMainWindow):
         if not path.exists():
             self.meeting_preview.setPlainText(f"{file_name} has not been created yet.")
             return
-        self.meeting_preview.setPlainText(path.read_text(encoding="utf-8"))
+        content = path.read_text(encoding="utf-8")
+        if file_name == "notes.md":
+            self.meeting_preview.setMarkdown(content)
+        else:
+            self.meeting_preview.setPlainText(content)
 
     def update_meeting_health(self) -> None:
         folder = self._selected_meeting_folder()
@@ -705,6 +742,9 @@ class MainWindow(QMainWindow):
         except Exception as error:
             QMessageBox.warning(self, "Nova Notetaker", f"Could not read meeting metadata: {error}")
             return
+        dialog = ReprocessDialog(self)
+        if dialog.exec() != QDialog.Accepted:
+            return
         metadata.status = "processing"
         self.meeting_store.write_metadata(folder, metadata)
         self.meeting_folder = folder
@@ -713,11 +753,12 @@ class MainWindow(QMainWindow):
         self.reprocess_button.setEnabled(False)
         self.refresh_meetings_button.setEnabled(False)
         self.open_folder_button.setEnabled(False)
+        self.export_html_button.setEnabled(False)
         self.archive_status.setText("Reprocessing selected meeting...")
         self.meeting_preview.setPlainText("Reprocessing selected meeting...")
         self.tabs.setCurrentIndex(2)
-        self.log(f"Reprocessing meeting: {folder}")
-        self._start_processing(folder, metadata)
+        self.log(f"Reprocessing meeting ({dialog.mode}): {folder}")
+        self._start_processing(folder, metadata, mode=dialog.mode)
 
     def copy_current_preview(self) -> None:
         QApplication.clipboard().setText(self.meeting_preview.toPlainText())
@@ -729,6 +770,30 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Nova Notetaker", "Select a meeting to open.")
             return
         os.startfile(folder)
+
+    def export_selected_notes_html(self) -> None:
+        folder = self._selected_meeting_folder()
+        if folder is None:
+            QMessageBox.information(self, "Nova Notetaker", "Select a meeting to export.")
+            return
+        notes_path = folder / "notes.md"
+        if not notes_path.exists():
+            QMessageBox.information(self, "Nova Notetaker", "This meeting does not have notes yet.")
+            return
+        document = QTextDocument()
+        document.setMarkdown(notes_path.read_text(encoding="utf-8"))
+        html_path = folder / "notes.html"
+        html_path.write_text(document.toHtml(), encoding="utf-8")
+        self.log(f"Exported HTML notes: {html_path}")
+
+    def detect_active_window_title(self) -> None:
+        title = self._active_window_title()
+        if not title:
+            QMessageBox.information(self, "Nova Notetaker", "Could not read the active window title.")
+            return
+        cleaned = self._clean_window_title(title)
+        self.meeting_title.setText(cleaned)
+        self.log(f"Detected meeting title: {cleaned}")
 
     def _selected_meeting_folder(self) -> Path | None:
         if not hasattr(self, "meeting_table"):
@@ -794,6 +859,29 @@ class MainWindow(QMainWindow):
             lines.append("Warnings: none")
 
         return "\n".join(lines)
+
+    @staticmethod
+    def _active_window_title() -> str:
+        if sys.platform != "win32":
+            return ""
+        try:
+            import ctypes
+
+            user32 = ctypes.windll.user32
+            hwnd = user32.GetForegroundWindow()
+            length = user32.GetWindowTextLengthW(hwnd)
+            buffer = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(hwnd, buffer, length + 1)
+            return buffer.value
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _clean_window_title(title: str) -> str:
+        title = title.replace(" | Microsoft Teams", "")
+        title = title.replace(" - Microsoft Teams", "")
+        title = title.replace("Microsoft Teams", "")
+        return title.strip(" -|") or "Teams Meeting"
 
     @Slot(str, float)
     def update_level(self, source: str, level: float) -> None:

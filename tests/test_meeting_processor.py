@@ -65,6 +65,37 @@ class MeetingProcessorTests(unittest.TestCase):
             self.assertIn("mic.wav skipped because microphone capture was muted", messages)
             self.assertNotIn("mic.wav is not valid: File does not exist", metadata.processing["warnings"])
 
+    def test_note_highlights_are_inline_markdown_html(self) -> None:
+        notes = (
+            "- Owner: Chad; Task: Send checklist; Due: Friday, June 5; "
+            "Source: Meeting; Confidence: High\n"
+            "- Date: Monday, June 17; Context: Review; Source: Meeting; Confidence: Low"
+        )
+
+        highlighted = MeetingStore._highlight_notes(notes)
+
+        self.assertIn("<span", highlighted)
+        self.assertIn("Friday, June 5", highlighted)
+        self.assertIn("Meeting</span>", highlighted)
+        self.assertIn("High</span>", highlighted)
+        self.assertIn("Low</span>", highlighted)
+
+    def test_notes_only_mode_uses_existing_transcript(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            folder = Path(temp_dir)
+            (folder / "transcript.md").write_text("# Transcript\n\n## Meeting\n\nExisting transcript text.", encoding="utf-8")
+            metadata = MeetingMetadata(title="Notes Only", started_at="2026-05-25T09:00:00", capture_mic=False)
+            settings = {
+                "transcription": {"enabled": False, "cross_bleed_cleanup": True},
+                "ai": {"provider": "none"},
+                "storage": {"meetings_dir": "meetings"},
+            }
+
+            result = MeetingProcessor(MeetingStore(), settings=settings).process(folder, metadata, lambda message: None, mode="notes_only")
+
+            self.assertTrue(result.notes_path.exists())
+            self.assertEqual(metadata.processing["mode"], "notes_only")
+
     @staticmethod
     def _write_silent_wav(path: Path) -> None:
         with wave.open(str(path), "wb") as wav_file:
