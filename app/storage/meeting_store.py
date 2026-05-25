@@ -65,6 +65,7 @@ class MeetingStore:
     def write_notes(self, folder: Path, metadata: MeetingMetadata, notes: str, transcript_path: Path, warnings: list[str]) -> Path:
         path = folder / "notes.md"
         warning_block = self._format_warnings(warnings)
+        notes = self._remove_source_fields(notes)
         notes = self._highlight_notes(notes.strip())
         path.write_text(
             f"# {metadata.title or 'Untitled Meeting'}\n\n"
@@ -116,6 +117,12 @@ class MeetingStore:
         for line in notes.splitlines():
             highlighted_lines.append(cls._highlight_note_line(line))
         return "\n".join(highlighted_lines).strip()
+
+    @staticmethod
+    def _remove_source_fields(notes: str) -> str:
+        notes = re.sub(r";\s*Source:\s*[^;\n]+", "", notes)
+        notes = re.sub(r"\bSource:\s*[^;\n]+;?\s*", "", notes)
+        return notes
 
     @classmethod
     def _highlight_note_line(cls, line: str) -> str:

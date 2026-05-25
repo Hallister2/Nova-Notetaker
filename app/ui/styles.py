@@ -46,9 +46,19 @@ QFrame#TranscriptRow {{
     border-radius: 0;
 }}
 
+QFrame#InsightItem {{
+    background-color: rgba(255, 255, 255, 0.025);
+    border: 1px solid rgba(255, 255, 255, 0.045);
+    border-radius: 6px;
+}}
+
 QFrame#Footer {{
     background-color: {SIDEBAR};
     border-top: 1px solid rgba(255, 255, 255, 0.07);
+}}
+
+QWidget#OverviewRoot {{
+    background-color: {APP_BACKGROUND};
 }}
 
 QLabel#Title {{
@@ -111,6 +121,52 @@ QLabel#GreenText {{
 QLabel#RedText {{
     color: {RECORDING};
     font-weight: 700;
+}}
+
+QLabel#Badge {{
+    background-color: #242B35;
+    color: {TEXT_SECONDARY};
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 7px;
+    padding: 2px 7px;
+    font-size: 11px;
+    font-weight: 700;
+}}
+
+QLabel#InsightItemTitle {{
+    background-color: transparent;
+    color: {TEXT_PRIMARY};
+    font-size: 12px;
+}}
+
+QLabel#Badge[kind="confidence-high"] {{
+    background-color: #12301F;
+    color: {SUCCESS};
+}}
+
+QLabel#Badge[kind="confidence-medium"] {{
+    background-color: #322705;
+    color: #FACC15;
+}}
+
+QLabel#Badge[kind="confidence-low"] {{
+    background-color: #341111;
+    color: #FB7185;
+}}
+
+QLabel#Badge[kind="date"] {{
+    background-color: #352407;
+    color: #FFCF70;
+}}
+
+QLabel#Badge[kind="source"] {{
+    background-color: #102A3A;
+    color: #7DD3FC;
+}}
+
+QLabel#Badge[kind="state"] {{
+    background-color: rgba(255, 138, 31, 0.14);
+    color: {ORANGE};
 }}
 
 QLineEdit, QComboBox, QSpinBox {{
@@ -182,6 +238,15 @@ QPushButton#TableActionButton:hover {{
     background-color: {ORANGE};
     color: #16100A;
     border: 1px solid {ORANGE_HOVER};
+}}
+
+QPushButton#SubtleActionButton {{
+    background-color: rgba(255, 255, 255, 0.04);
+    color: {TEXT_SECONDARY};
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 11px;
 }}
 
 QPushButton#SidebarButton {{

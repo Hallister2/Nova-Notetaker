@@ -46,6 +46,25 @@ class AudioDeviceManager:
             return []
         return self._filter_microphones_for_ui(devices)
 
+    def default_microphone(self) -> AudioDevice | None:
+        try:
+            import sounddevice as sd
+
+            hostapis = sd.query_hostapis()
+            raw = sd.query_devices(kind="input")
+            index = int(raw.get("index", sd.default.device[0] if sd.default.device else -1))
+            host_api = hostapis[raw["hostapi"]]["name"]
+            return AudioDevice(
+                name=str(raw["name"]),
+                index=index,
+                kind="input",
+                host_api=host_api,
+                channels=int(raw.get("max_input_channels", 0)),
+                sample_rate=int(raw.get("default_samplerate", 0)) or None,
+            )
+        except Exception:
+            return None
+
     def list_wasapi_loopbacks(self) -> list[AudioDevice]:
         devices: list[AudioDevice] = []
         try:
@@ -68,6 +87,25 @@ class AudioDeviceManager:
         except Exception:
             return []
         return devices
+
+    def default_wasapi_loopback(self) -> AudioDevice | None:
+        try:
+            import pyaudiowpatch as pyaudio
+            pa = pyaudio.PyAudio()
+            try:
+                raw = pa.get_default_wasapi_loopback()
+                return AudioDevice(
+                    name=str(raw.get("name", "Default output loopback")),
+                    index=int(raw.get("index")),
+                    kind="loopback",
+                    host_api="WASAPI loopback",
+                    channels=int(raw.get("maxInputChannels", 0)) or 2,
+                    sample_rate=int(raw.get("defaultSampleRate", 0)) or None,
+                )
+            finally:
+                pa.terminate()
+        except Exception:
+            return None
 
     @classmethod
     def _filter_microphones_for_ui(cls, devices: list[AudioDevice]) -> list[AudioDevice]:

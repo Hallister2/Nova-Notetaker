@@ -4,8 +4,8 @@
     "theme": "nova_orange"
   },
   "audio": {
-    "mic_device_name": "Microphone Array on SoundWire Device (2- Realtek XU)",
-    "system_loopback_device_name": "Speakers (4- Realtek XU) [Loopback]",
+    "mic_device_name": "__default_microphone__",
+    "system_loopback_device_name": "__default_wasapi_loopback__",
     "capture_mic": false,
     "capture_profile": "laptop_speakers",
     "sample_rate": 16000,

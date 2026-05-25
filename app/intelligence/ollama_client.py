@@ -85,8 +85,7 @@ class OllamaClient:
             "- If a section has no evidence, write '- None captured.'\n"
             "- Preserve concrete dates, names, systems, and commitments.\n\n"
             "Action item format:\n"
-            "- Owner: <person or Unknown>; Task: <specific task>; Due: <date or Unknown>; "
-            "Source: <You or Meeting>; Confidence: <High, Medium, or Low>\n"
+            "- Owner: <person or Unknown>; Task: <specific task>; Due: <date or Unknown>; Confidence: <High, Medium, or Low>\n"
             "- Use Unknown when the transcript does not clearly name an owner or due date.\n"
             "- Do not assign tasks to Nova unless the transcript explicitly says Nova owns the task.\n"
             "- If an item is inferred from noisy transcript text, mark Confidence: Low.\n\n"
@@ -97,7 +96,7 @@ class OllamaClient:
             "Do not move a concrete requested task into Follow-ups if it has an owner or implied owner.\n"
             "Follow-ups are only broad next steps without a clear owner.\n\n"
             "Important date format:\n"
-            "- Date: <date>; Context: <what it refers to>; Source: <You or Meeting>; Confidence: <High, Medium, or Low>\n\n"
+            "- Date: <date>; Context: <what it refers to>; Confidence: <High, Medium, or Low>\n\n"
             f"{hint_block}"
             f"Transcript:\n{transcript}"
         )

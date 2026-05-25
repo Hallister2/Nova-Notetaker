@@ -6,6 +6,7 @@ from typing import Any, Callable
 
 from app.audio.audio_validation import inspect_wav
 from app.core.settings import load_settings
+from app.intelligence.insights import build_insights_from_notes, write_insights_json
 from app.intelligence.ollama_client import OllamaClient
 from app.storage.meeting_store import MeetingMetadata, MeetingStore
 from app.transcription.transcript_cleanup import reduce_cross_bleed_for_profile
@@ -121,9 +122,12 @@ class MeetingProcessor:
             on_status(warning)
             notes_path = self.meeting_store.write_notes_stub(folder, metadata, transcript_path, warnings)
 
+        insights_path = write_insights_json(folder, build_insights_from_notes(notes_path))
+        on_status(f"Meeting insights saved: {insights_path.name}")
         metadata.processing = {
             "transcript_path": str(transcript_path),
             "notes_path": str(notes_path),
+            "insights_path": str(insights_path),
             "warnings": warnings,
             "mode": mode,
         }

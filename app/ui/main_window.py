@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, Qt, QTimer, Signal, Slot
-from PySide6.QtGui import QTextDocument
+from PySide6.QtGui import QCursor, QTextDocument
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -41,6 +42,7 @@ from PySide6.QtWidgets import (
 from app.audio.capture_service import CaptureConfig, CaptureService
 from app.audio.device_manager import AudioDevice, AudioDeviceManager
 from app.core.settings import load_settings, save_settings
+from app.intelligence.insights import InsightItem, MeetingInsights, load_or_build_insights
 from app.storage.meeting_store import MeetingMetadata, MeetingStore
 from app.ui.orb_widget import OrbWidget
 from app.ui.styles import APP_STYLESHEET
@@ -54,6 +56,9 @@ CAPTURE_PROFILES = {
     "Conference room": "conference_room",
     "Debug / raw capture": "debug_raw",
 }
+
+DEFAULT_LOOPBACK_DEVICE = "__default_wasapi_loopback__"
+DEFAULT_MIC_DEVICE = "__default_microphone__"
 
 
 class SortableTableItem(QTableWidgetItem):
@@ -558,7 +563,7 @@ class MainWindow(QMainWindow):
         self.meeting_table = QTableWidget(0, 5)
         self.meeting_table.setHorizontalHeaderLabels(["Date", "Time", "Meeting Name", "Status", "Open"])
         self.meeting_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.meeting_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.meeting_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.meeting_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.meeting_table.setSortingEnabled(True)
         self.meeting_table.verticalHeader().setVisible(False)
@@ -579,7 +584,15 @@ class MainWindow(QMainWindow):
         self.open_folder_button.clicked.connect(self.open_selected_meeting_folder)
         self.export_html_button = QPushButton("Export HTML")
         self.export_html_button.clicked.connect(self.export_selected_notes_html)
-        for button in (self.refresh_meetings_button, self.reprocess_button, self.open_folder_button, self.export_html_button):
+        self.delete_meeting_button = QPushButton("Delete selected")
+        self.delete_meeting_button.clicked.connect(self.delete_selected_meetings)
+        for button in (
+            self.refresh_meetings_button,
+            self.reprocess_button,
+            self.open_folder_button,
+            self.export_html_button,
+            self.delete_meeting_button,
+        ):
             archive_buttons.addWidget(button)
         self.archive_status = self._muted_label("Ready")
         meetings_panel_layout.addWidget(meetings_title)
@@ -785,10 +798,10 @@ class MainWindow(QMainWindow):
             self.resize(preferred_width, preferred_height)
             return
         available = screen.availableGeometry()
-        width = min(preferred_width, int(available.width() * 0.92))
-        height = min(preferred_height, int(available.height() * 0.88))
-        width = max(width, self.minimumWidth())
-        height = max(height, self.minimumHeight())
+        max_width = int(available.width() * 0.92)
+        max_height = int(available.height() * 0.88)
+        width = min(max(self.minimumWidth(), min(preferred_width, max_width)), available.width())
+        height = min(max(self.minimumHeight(), min(preferred_height, max_height)), available.height())
         self.resize(width, height)
         x = available.x() + max(0, (available.width() - width) // 2)
         y = available.y() + max(0, (available.height() - height) // 2)
@@ -796,15 +809,15 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _fit_dialog_to_available_screen(dialog: QDialog, preferred_width: int, preferred_height: int) -> None:
-        screen = QApplication.primaryScreen()
+        screen = QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
         if not screen:
             dialog.resize(preferred_width, preferred_height)
             return
         available = screen.availableGeometry()
-        width = min(preferred_width, int(available.width() * 0.90))
-        height = min(preferred_height, int(available.height() * 0.86))
-        width = max(width, dialog.minimumWidth())
-        height = max(height, dialog.minimumHeight())
+        max_width = int(available.width() * 0.90)
+        max_height = int(available.height() * 0.86)
+        width = min(max(dialog.minimumWidth(), min(preferred_width, max_width)), available.width())
+        height = min(max(dialog.minimumHeight(), min(preferred_height, max_height)), available.height())
         dialog.resize(width, height)
         x = available.x() + max(0, (available.width() - width) // 2)
         y = available.y() + max(0, (available.height() - height) // 2)
@@ -813,6 +826,11 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._apply_responsive_layout(event.size().width())
+
+    def closeEvent(self, event) -> None:
+        for dialog in list(self.meeting_overview_windows):
+            dialog.close()
+        super().closeEvent(event)
 
     def _apply_responsive_layout(self, width: int) -> None:
         if width >= 1380:
@@ -925,29 +943,74 @@ class MainWindow(QMainWindow):
             self.transcript_layout.addWidget(row)
         self.transcript_layout.addStretch()
 
-    def _set_insight_items(self, layout: QVBoxLayout, items: list[str]) -> None:
+    def _set_insight_items(self, layout: QVBoxLayout, items: list[str | InsightItem]) -> None:
         while layout.count():
             item = layout.takeAt(0)
             widget = item.widget()
             if widget:
                 widget.deleteLater()
         for item_text in items[:5] or ["None detected yet"]:
-            layout.addWidget(self._muted_label(f"- {item_text}"))
+            if isinstance(item_text, InsightItem):
+                layout.addWidget(self._insight_item_widget(item_text))
+            else:
+                layout.addWidget(self._muted_label(f"- {item_text}"))
+
+    def _insight_item_widget(self, item: InsightItem) -> QWidget:
+        container = QFrame()
+        container.setObjectName("InsightItem")
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(8, 7, 8, 7)
+        layout.setSpacing(6)
+        title = QLabel(item.display_text)
+        title.setObjectName("InsightItemTitle")
+        title.setWordWrap(True)
+        layout.addWidget(title)
+        badges = QHBoxLayout()
+        badges.setSpacing(6)
+        badge_values = []
+        if item.kind == "action":
+            badge_values.append((item.owner, "owner"))
+            badge_values.append((item.due_date, "date"))
+        elif item.kind == "date":
+            badge_values.append((item.due_date, "date"))
+        badge_values.append((item.confidence, f"confidence-{item.confidence.lower()}"))
+        for value, kind in badge_values:
+            if not value:
+                continue
+            badges.addWidget(self._badge_label(value, kind))
+        if item.kind == "date":
+            calendar_button = QPushButton("Calendar later")
+            calendar_button.setObjectName("SubtleActionButton")
+            calendar_button.setEnabled(False)
+            calendar_button.setToolTip("Calendar integration is planned for a later pass.")
+            badges.addWidget(calendar_button)
+        badges.addStretch()
+        layout.addLayout(badges)
+        return container
+
+    @staticmethod
+    def _badge_label(text: str, kind: str) -> QLabel:
+        display_text = text if len(text) <= 22 else f"{text[:19]}..."
+        label = QLabel(display_text)
+        label.setObjectName("Badge")
+        label.setProperty("kind", kind)
+        label.setToolTip(text)
+        return label
 
     def _update_insight_group(
         self,
         count_label: QLabel,
         items_layout: QVBoxLayout,
-        items: list[str],
+        items: list[str | InsightItem],
     ) -> None:
         count_label.setText(str(len(items)))
         self._set_insight_items(items_layout, items)
 
     def _update_live_insights_from_folder(self, folder: Path) -> None:
-        insights = self._parse_notes_insights(folder / "notes.md")
-        self._update_insight_group(self.action_items_count, self.live_action_items_layout, insights["actions"])
-        self._update_insight_group(self.decisions_count, self.live_decisions_layout, insights["decisions"])
-        self._update_insight_group(self.dates_count, self.live_dates_layout, insights["dates"])
+        insights = load_or_build_insights(folder)
+        self._update_insight_group(self.action_items_count, self.live_action_items_layout, insights.actions)
+        self._update_insight_group(self.decisions_count, self.live_decisions_layout, insights.decisions)
+        self._update_insight_group(self.dates_count, self.live_dates_layout, insights.dates)
 
     def _update_selected_meeting_details(self, folder: Path | None) -> None:
         if folder is None:
@@ -961,10 +1024,10 @@ class MainWindow(QMainWindow):
             self.selected_meeting_summary.setText(f"{metadata.title}\n{metadata.started_at}\nStatus: {metadata.status}")
         except Exception:
             self.selected_meeting_summary.setText(folder.name)
-        insights = self._parse_notes_insights(folder / "notes.md")
-        self._update_insight_group(self.selected_action_count, self.selected_action_items_layout, insights["actions"])
-        self._update_insight_group(self.selected_decision_count, self.selected_decisions_layout, insights["decisions"])
-        self._update_insight_group(self.selected_date_count, self.selected_dates_layout, insights["dates"])
+        insights = load_or_build_insights(folder)
+        self._update_insight_group(self.selected_action_count, self.selected_action_items_layout, insights.actions)
+        self._update_insight_group(self.selected_decision_count, self.selected_decisions_layout, insights.decisions)
+        self._update_insight_group(self.selected_date_count, self.selected_dates_layout, insights.dates)
 
     @classmethod
     def _parse_notes_insights(cls, notes_path: Path) -> dict[str, list[str]]:
@@ -1275,8 +1338,8 @@ class MainWindow(QMainWindow):
         self.settings["audio"]["capture_mic"] = capture_mic
         save_settings(self.settings)
 
-        mic_device = self._device_by_name(self.microphones, self.settings["audio"].get("mic_device_name", ""))
-        loop_device = self._device_by_name(self.loopbacks, self.settings["audio"].get("system_loopback_device_name", ""))
+        mic_device = self._resolve_microphone_device()
+        loop_device = self._resolve_loopback_device()
 
         if capture_mic and mic_device is None:
             QMessageBox.warning(self, "Nova Notetaker", "Select a microphone in Settings before starting capture.")
@@ -1349,6 +1412,54 @@ class MainWindow(QMainWindow):
         self.log(f"Capture profile: {self._profile_label(self.settings['audio'].get('capture_profile', ''))}")
         self.request_worker_start.emit()
 
+    def _resolve_microphone_device(self) -> AudioDevice | None:
+        setting = self.settings["audio"].get("mic_device_name", "") or DEFAULT_MIC_DEVICE
+        if setting == DEFAULT_MIC_DEVICE:
+            default_mic = self.device_manager.default_microphone()
+            if default_mic:
+                default_mic = self._prefer_visible_microphone(default_mic)
+            if default_mic:
+                self.log(f"Using Windows default microphone: {default_mic.label}")
+                return default_mic
+            self.log("Could not resolve Windows default microphone; using first available microphone.")
+            return self.microphones[0] if self.microphones else None
+
+        selected = self._device_by_name(self.microphones, setting)
+        default_mic = self.device_manager.default_microphone()
+        if selected and default_mic and selected.name != default_mic.name:
+            self.log(
+                "Microphone device is not the current Windows default input. "
+                f"Selected: {selected.label}; default: {default_mic.label}"
+            )
+        return selected
+
+    def _prefer_visible_microphone(self, default_mic: AudioDevice) -> AudioDevice:
+        default_key = self.device_manager._physical_device_key(default_mic.name)
+        for device in self.microphones:
+            visible_key = self.device_manager._physical_device_key(device.name)
+            if default_key and (default_key in visible_key or visible_key in default_key):
+                return device
+        return default_mic
+
+    def _resolve_loopback_device(self) -> AudioDevice | None:
+        setting = self.settings["audio"].get("system_loopback_device_name", "") or DEFAULT_LOOPBACK_DEVICE
+        if setting == DEFAULT_LOOPBACK_DEVICE:
+            default_loopback = self.device_manager.default_wasapi_loopback()
+            if default_loopback:
+                self.log(f"Using Windows default output for system audio: {default_loopback.label}")
+                return default_loopback
+            self.log("Could not resolve Windows default output loopback; using first available loopback device.")
+            return self.loopbacks[0] if self.loopbacks else None
+
+        selected = self._device_by_name(self.loopbacks, setting)
+        default_loopback = self.device_manager.default_wasapi_loopback()
+        if selected and default_loopback and selected.name != default_loopback.name:
+            self.log(
+                "System audio device is not the current Windows default output. "
+                f"Selected: {selected.label}; default: {default_loopback.label}"
+            )
+        return selected
+
     def stop_capture(self) -> None:
         if not self.worker:
             return
@@ -1383,9 +1494,10 @@ class MainWindow(QMainWindow):
             self._processing_finished()
 
     def _save_audio_selections(self, mic_device: AudioDevice | None, loop_device: AudioDevice | None) -> None:
-        if mic_device:
+        if mic_device and self.settings["audio"].get("mic_device_name") != DEFAULT_MIC_DEVICE:
             self.settings["audio"]["mic_device_name"] = mic_device.name
-        self.settings["audio"]["system_loopback_device_name"] = loop_device.name if loop_device else ""
+        if self.settings["audio"].get("system_loopback_device_name") != DEFAULT_LOOPBACK_DEVICE:
+            self.settings["audio"]["system_loopback_device_name"] = loop_device.name if loop_device else ""
         save_settings(self.settings)
 
     def _save_capture_mic_toggle(self, enabled: bool) -> None:
@@ -1420,16 +1532,18 @@ class MainWindow(QMainWindow):
         self.settings_mic_combo.blockSignals(True)
         self.settings_loopback_combo.blockSignals(True)
         self.settings_mic_combo.clear()
+        self.settings_mic_combo.addItem("Windows default microphone", DEFAULT_MIC_DEVICE)
         for device in self.microphones:
             self.settings_mic_combo.addItem(device.label, device.name)
         self.settings_loopback_combo.clear()
+        self.settings_loopback_combo.addItem("Windows default output", DEFAULT_LOOPBACK_DEVICE)
         self.settings_loopback_combo.addItem("None", "")
         for device in self.loopbacks:
             self.settings_loopback_combo.addItem(device.label, device.name)
         self.settings_mic_combo.blockSignals(False)
         self.settings_loopback_combo.blockSignals(False)
-        select_combo_by_data(self.settings_mic_combo, mic_value)
-        select_combo_by_data(self.settings_loopback_combo, loopback_value)
+        select_combo_by_data(self.settings_mic_combo, mic_value or DEFAULT_MIC_DEVICE)
+        select_combo_by_data(self.settings_loopback_combo, loopback_value or DEFAULT_LOOPBACK_DEVICE)
 
     def save_settings_page(self) -> None:
         self.settings["audio"]["mic_device_name"] = str(self.settings_mic_combo.currentData() or "")
@@ -1451,8 +1565,10 @@ class MainWindow(QMainWindow):
         self.log("Settings saved.")
 
     def update_settings_summary(self) -> None:
-        mic_name = self.settings["audio"].get("mic_device_name", "") or "No microphone selected"
-        system_name = self.settings["audio"].get("system_loopback_device_name", "") or "No system audio selected"
+        mic_setting = self.settings["audio"].get("mic_device_name", "") or DEFAULT_MIC_DEVICE
+        mic_name = "Windows default microphone" if mic_setting == DEFAULT_MIC_DEVICE else mic_setting or "No microphone selected"
+        system_setting = self.settings["audio"].get("system_loopback_device_name", "") or DEFAULT_LOOPBACK_DEVICE
+        system_name = "Windows default output" if system_setting == DEFAULT_LOOPBACK_DEVICE else system_setting or "No system audio selected"
         profile = self._profile_label(self.settings["audio"].get("capture_profile", ""))
         provider = self.settings["ai"].get("provider", "ollama")
         whisper = "on" if self.settings["transcription"].get("enabled", False) else "off"
@@ -1610,15 +1726,21 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Nova Notetaker", f"Could not read meeting metadata: {error}")
             return
 
-        dialog = QDialog(self)
+        dialog = QDialog()
         dialog.setAttribute(Qt.WA_DeleteOnClose, True)
         dialog.setWindowTitle(f"Nova Meeting Overview - {metadata.title or folder.name}")
+        dialog.setStyleSheet(APP_STYLESHEET)
         dialog.setMinimumSize(720, 520)
-        self._fit_dialog_to_available_screen(dialog, preferred_width=1180, preferred_height=760)
         self.meeting_overview_windows.append(dialog)
         dialog.destroyed.connect(lambda *_: self._forget_overview_window(dialog))
 
-        layout = QVBoxLayout(dialog)
+        overview_root = QWidget()
+        overview_root.setObjectName("OverviewRoot")
+        dialog.setLayout(QVBoxLayout())
+        dialog.layout().setContentsMargins(0, 0, 0, 0)
+        dialog.layout().addWidget(overview_root)
+
+        layout = QVBoxLayout(overview_root)
         layout.setContentsMargins(22, 22, 22, 22)
         layout.setSpacing(16)
 
@@ -1651,16 +1773,21 @@ class MainWindow(QMainWindow):
         notes_view.setReadOnly(True)
         notes_path = folder / "notes.md"
         if notes_path.exists():
-            notes_view.setMarkdown(notes_path.read_text(encoding="utf-8"))
+            notes_view.setMarkdown(self._notes_for_display(notes_path))
         else:
             notes_view.setPlainText("notes.md has not been created yet.")
         notes_layout.addWidget(notes_view, stretch=1)
 
+        details_scroll = QScrollArea()
+        details_scroll.setWidgetResizable(True)
+        details_scroll.setFrameShape(QFrame.NoFrame)
+        details_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        details_scroll.setMinimumWidth(330)
+        details_scroll.setMaximumWidth(430)
         details_panel = QFrame()
         details_panel.setObjectName("Panel")
-        details_panel.setMinimumWidth(330)
         details_layout = QVBoxLayout(details_panel)
-        details_layout.setContentsMargins(18, 18, 18, 18)
+        details_layout.setContentsMargins(16, 16, 16, 16)
         details_layout.setSpacing(14)
         details_layout.addWidget(self._section_label("Meeting details"))
         health = QTextEdit()
@@ -1669,23 +1796,44 @@ class MainWindow(QMainWindow):
         health.setPlainText(self._format_health_summary(metadata))
         details_layout.addWidget(health)
 
-        insights = self._parse_notes_insights(notes_path)
+        insights = load_or_build_insights(folder)
+        if insights.quality_warnings:
+            warning_card = QFrame()
+            warning_card.setObjectName("RaisedPanel")
+            warning_layout = QVBoxLayout(warning_card)
+            warning_layout.setContentsMargins(14, 12, 14, 12)
+            warning_layout.addWidget(self._section_label("Review needed"))
+            for warning in insights.quality_warnings[:4]:
+                warning_layout.addWidget(self._muted_label(f"- {warning}"))
+            details_layout.addWidget(warning_card)
+
         for title_text, items in (
-            ("Action items", insights["actions"]),
-            ("Key decisions", insights["decisions"]),
-            ("Scheduling details", insights["dates"]),
+            ("Action items", insights.actions),
+            ("Key decisions", insights.decisions),
+            ("Scheduling details", insights.dates),
         ):
             count_label = QLabel(str(len(items)))
             card, _items_layout = self._insight_card(title_text, count_label, items or ["None detected"])
             details_layout.addWidget(card)
         details_layout.addStretch()
+        details_scroll.setWidget(details_panel)
 
         content.addWidget(notes_panel, 0, 0)
-        content.addWidget(details_panel, 0, 1)
+        content.addWidget(details_scroll, 0, 1)
         content.setColumnStretch(0, 2)
         content.setColumnStretch(1, 1)
         layout.addLayout(content, stretch=1)
+        self._fit_dialog_to_available_screen(dialog, preferred_width=1180, preferred_height=760)
         dialog.show()
+
+    @staticmethod
+    def _notes_for_display(notes_path: Path) -> str:
+        text = notes_path.read_text(encoding="utf-8")
+        text = re.sub(r";\s*Source:\s*<span[^>]*>[^<]+</span>", "", text)
+        text = re.sub(r";\s*Source:\s*[^;\n]+", "", text)
+        text = re.sub(r"\bSource:\s*<span[^>]*>[^<]+</span>;?\s*", "", text)
+        text = re.sub(r"\bSource:\s*[^;\n]+;?\s*", "", text)
+        return text
 
     def _forget_overview_window(self, dialog: QDialog) -> None:
         if dialog in self.meeting_overview_windows:
@@ -1696,7 +1844,11 @@ class MainWindow(QMainWindow):
         if not notes_path.exists():
             QMessageBox.information(self, "Nova Notetaker", "This meeting does not have notes yet.")
             return
-        self._export_notes_html_for_folder(folder)
+        document = QTextDocument()
+        document.setMarkdown(self._notes_for_display(notes_path))
+        html_path = folder / "notes.html"
+        html_path.write_text(document.toHtml(), encoding="utf-8")
+        self.log(f"Exported HTML notes: {html_path}")
 
     def update_meeting_health(self) -> None:
         if not hasattr(self, "meeting_health"):
@@ -1756,6 +1908,43 @@ class MainWindow(QMainWindow):
             return
         os.startfile(folder)
 
+    def delete_selected_meetings(self) -> None:
+        folders = self._selected_meeting_folders()
+        if not folders:
+            QMessageBox.information(self, "Nova Notetaker", "Select one or more meetings to delete.")
+            return
+        count = len(folders)
+        noun = "meeting" if count == 1 else "meetings"
+        response = QMessageBox.question(
+            self,
+            "Delete meetings",
+            f"Delete {count} selected {noun}? This will remove the meeting folder and its audio, transcript, notes, and metadata.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if response != QMessageBox.Yes:
+            return
+
+        meetings_root = self.meeting_store.meetings_root.resolve()
+        deleted = 0
+        skipped: list[str] = []
+        for folder in folders:
+            try:
+                resolved = folder.resolve()
+                if meetings_root not in resolved.parents:
+                    skipped.append(folder.name)
+                    continue
+                shutil.rmtree(resolved)
+                deleted += 1
+            except Exception as error:
+                skipped.append(f"{folder.name}: {error}")
+
+        self.log(f"Deleted {deleted} {noun}.")
+        if skipped:
+            self.log(f"Skipped {len(skipped)} meeting(s): {'; '.join(skipped)}")
+            QMessageBox.warning(self, "Nova Notetaker", f"Deleted {deleted}, skipped {len(skipped)}. See Logs for details.")
+        self.refresh_meetings()
+
     def export_selected_notes_html(self) -> None:
         folder = self._selected_meeting_folder()
         if folder is None:
@@ -1765,11 +1954,7 @@ class MainWindow(QMainWindow):
         if not notes_path.exists():
             QMessageBox.information(self, "Nova Notetaker", "This meeting does not have notes yet.")
             return
-        document = QTextDocument()
-        document.setMarkdown(notes_path.read_text(encoding="utf-8"))
-        html_path = folder / "notes.html"
-        html_path.write_text(document.toHtml(), encoding="utf-8")
-        self.log(f"Exported HTML notes: {html_path}")
+        self._export_notes_html_for_folder(folder)
 
     def detect_active_window_title(self) -> None:
         title = self._active_window_title()
@@ -1788,6 +1973,19 @@ class MainWindow(QMainWindow):
             return None
         raw_path = selected_items[0].data(Qt.UserRole)
         return Path(raw_path) if raw_path else None
+
+    def _selected_meeting_folders(self) -> list[Path]:
+        if not hasattr(self, "meeting_table"):
+            return []
+        folders: list[Path] = []
+        seen: set[str] = set()
+        for item in self.meeting_table.selectedItems():
+            raw_path = item.data(Qt.UserRole)
+            if not raw_path or raw_path in seen:
+                continue
+            seen.add(raw_path)
+            folders.append(Path(raw_path))
+        return folders
 
     @staticmethod
     def _split_started_at(started_at: str) -> tuple[str, str]:
