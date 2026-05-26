@@ -177,6 +177,12 @@ QLabel#StatValue {{
     font-weight: 700;
 }}
 
+QLabel#HeroTimer {{
+    color: {t["text"]};
+    font-size: 28px;
+    font-weight: 700;
+}}
+
 QLabel#OrangeText {{
     color: {t["orange"]};
     font-weight: 700;
@@ -236,6 +242,45 @@ QLabel#Badge[kind="date"] {{
 QLabel#Badge[kind="state"] {{
     background-color: rgba(255, 138, 31, 0.14);
     color: {t["orange"]};
+}}
+
+QLabel#StatusBadge {{
+    background-color: {t["badge"]};
+    color: {t["secondary"]};
+    border: 1px solid {t["border"]};
+    border-radius: 9px;
+    padding: 4px 9px;
+    font-size: 11px;
+    font-weight: 800;
+}}
+
+QLabel#StatusBadge[state="complete"] {{
+    background-color: rgba(61, 220, 132, 0.13);
+    color: {t["success"]};
+    border: 1px solid rgba(61, 220, 132, 0.25);
+}}
+
+QLabel#StatusBadge[state="review"] {{
+    background-color: rgba(255, 138, 31, 0.14);
+    color: {t["orange"]};
+    border: 1px solid rgba(255, 138, 31, 0.35);
+}}
+
+QLabel#StatusBadge[state="processing"] {{
+    background-color: rgba(105, 167, 255, 0.14);
+    color: {t["blue"]};
+    border: 1px solid rgba(105, 167, 255, 0.28);
+}}
+
+QLabel#StatusBadge[state="draft"] {{
+    background-color: {t["soft"]};
+    color: {t["muted"]};
+}}
+
+QFrame#FormSection {{
+    background-color: {t["soft"]};
+    border: 1px solid {t["border"]};
+    border-radius: 8px;
 }}
 
 QLineEdit, QComboBox, QSpinBox {{
@@ -442,6 +487,27 @@ QHeaderView::section {{
     border-bottom: 1px solid {t["border"]};
     padding: 8px;
     font-weight: 600;
+}}
+
+QTabWidget::pane {{
+    border: 0;
+    background-color: transparent;
+}}
+
+QTabBar::tab {{
+    background-color: {t["raised"]};
+    color: {t["secondary"]};
+    border: 1px solid {t["border"]};
+    border-radius: 7px;
+    padding: 8px 14px;
+    margin-right: 6px;
+    font-weight: 700;
+}}
+
+QTabBar::tab:selected {{
+    background-color: rgba(255, 138, 31, 0.16);
+    color: {t["orange"]};
+    border: 1px solid rgba(255, 138, 31, 0.38);
 }}
 
 QProgressBar {{

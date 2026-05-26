@@ -580,7 +580,7 @@ class MainWindow(QMainWindow):
         self.status_label = QLabel("Ready")
         self.status_label.setObjectName("GreenText")
         self.elapsed_label = QLabel("00:00:00")
-        self.elapsed_label.setObjectName("StatValue")
+        self.elapsed_label.setObjectName("HeroTimer")
         self.status_detail_label = self._muted_label("Waiting to start")
         self.orb_caption = self.status_detail_label
         self.capture_mic_toggle = QCheckBox("Capture microphone")
@@ -595,7 +595,7 @@ class MainWindow(QMainWindow):
         self.system_level.setRange(0, 100)
 
         layout.addWidget(self._section_label("Meeting title"), 0, 0)
-        layout.addWidget(self._section_label("Status"), 0, 1)
+        layout.addWidget(self._section_label("Recording state"), 0, 1)
         layout.addWidget(self._section_label("Audio levels"), 0, 2, 1, 2)
         layout.addLayout(title_stack, 1, 0, 3, 1)
         layout.addWidget(self.status_label, 1, 1)
@@ -738,7 +738,7 @@ class MainWindow(QMainWindow):
         self.meeting_table.setColumnWidth(6, 150)
         filters = QHBoxLayout()
         self.meeting_filter_combo = QComboBox()
-        self.meeting_filter_combo.addItems(["All meetings", "Needs review", "Has open actions", "Processed", "No transcript"])
+        self.meeting_filter_combo.addItems(["All meetings", "Needs review", "Has open actions", "Complete", "Missing transcript"])
         self.meeting_filter_combo.currentIndexChanged.connect(self.refresh_meetings)
         filters.addWidget(QLabel("Filter"))
         filters.addWidget(self.meeting_filter_combo)
@@ -838,8 +838,10 @@ class MainWindow(QMainWindow):
         content_layout.addWidget(title)
         content_layout.addWidget(self._muted_label("Edit meeting profiles for context and note templates for output style."))
 
-        content_layout.addWidget(self._build_meeting_profiles_section())
-        content_layout.addWidget(self._build_note_templates_section())
+        template_tabs = QTabWidget()
+        template_tabs.addTab(self._build_meeting_profiles_section(), "Meeting profiles")
+        template_tabs.addTab(self._build_note_templates_section(), "Note templates")
+        content_layout.addWidget(template_tabs, stretch=1)
         content_layout.addStretch()
 
         scroll.setWidget(content)
@@ -1288,7 +1290,6 @@ class MainWindow(QMainWindow):
 
         panel = QFrame()
         panel.setObjectName("Panel")
-        panel.setMinimumHeight(760)
         panel_layout = QVBoxLayout(panel)
         panel_layout.setContentsMargins(22, 20, 22, 20)
         panel_layout.setSpacing(16)
@@ -1297,12 +1298,6 @@ class MainWindow(QMainWindow):
         title.setObjectName("Title")
         panel_layout.addWidget(title)
         panel_layout.addWidget(self._muted_label("Device, capture, WhisperLive, and Ollama settings."))
-
-        form = QFormLayout()
-        form.setLabelAlignment(Qt.AlignLeft)
-        form.setFormAlignment(Qt.AlignTop)
-        form.setHorizontalSpacing(18)
-        form.setVerticalSpacing(12)
 
         self.settings_mic_combo = QComboBox()
         self.settings_loopback_combo = QComboBox()
@@ -1361,22 +1356,44 @@ class MainWindow(QMainWindow):
         self.settings_ollama_url.setPlaceholderText("Example: http://192.168.200.2:11434")
         self.settings_whisper_url.setPlaceholderText("Example: http://192.168.200.2:9090")
 
-        form.addRow("Microphone", self._setting_with_hint(self.settings_mic_combo, "Use Windows default unless you need to force a specific input device."))
-        form.addRow("System audio", self._setting_with_hint(self.settings_loopback_combo, "Use Windows default output for the most portable Teams/browser/audio setup."))
-        form.addRow("Capture profile", self._setting_with_hint(self.settings_profile_combo, "Tunes cleanup behavior for laptop speakers, headphones, conference rooms, or debug capture."))
-        form.addRow("AI provider", self._setting_with_hint(self.settings_provider_combo, "Ollama is currently wired for local note generation. OpenAI is reserved for a later provider pass."))
-        form.addRow("Ollama URL", self._setting_with_hint(self.settings_ollama_url, "Base URL for your Ollama server. Use the same address you use for Ollama API calls."))
-        form.addRow("Ollama model", self._setting_with_hint(self.settings_ollama_model, "Any installed Ollama model name works here. Run `ollama list` on the Ollama host to see available models."))
-        form.addRow("AI timeout", self._setting_with_hint(self.settings_ai_timeout, "Maximum seconds to wait for notes generation before Nova treats it as failed."))
-        form.addRow("WhisperLive", self._setting_with_hint(self.settings_transcription_enabled, "Turn this on to transcribe audio with your WhisperLive server during processing."))
-        form.addRow("WhisperLive URL", self._setting_with_hint(self.settings_whisper_url, "Base URL for WhisperLive. Nova converts http/https to the matching WebSocket connection."))
-        form.addRow("Whisper model", self._setting_with_hint(self.settings_whisper_model, "Common values are tiny, base, small, medium, and large-v3. Availability depends on your WhisperLive container/config. Check the container logs or startup command for enabled/default model behavior."))
-        form.addRow("Whisper language", self._setting_with_hint(self.settings_whisper_language, "Use ISO-style language codes such as en. Leave as en for English meetings."))
-        form.addRow("Voice activity detection", self._setting_with_hint(self.settings_use_vad, "Helps WhisperLive ignore silence and non-speech. Usually leave enabled."))
-        form.addRow("Transcript cleanup", self._setting_with_hint(self.settings_cross_bleed_cleanup, "Reduces duplicate mic/system bleed and repeated transcript fragments before notes generation."))
-        form.addRow("Transcription timeout", self._setting_with_hint(self.settings_transcription_timeout, "Maximum seconds to wait for each WhisperLive transcription request."))
-        form.addRow("Long recording chunk size", self._setting_with_hint(self.settings_long_audio_chunk_seconds, "Long recordings are split into chunks before WhisperLive. Lower this if long meetings disconnect; 120-180 seconds is a good range."))
-        panel_layout.addLayout(form)
+        settings_tabs = QTabWidget()
+        settings_tabs.addTab(
+            self._settings_section(
+                [
+                    ("Microphone", self._setting_with_hint(self.settings_mic_combo, "Use Windows default unless you need to force a specific input device.")),
+                    ("System audio", self._setting_with_hint(self.settings_loopback_combo, "Use Windows default output for the most portable Teams/browser/audio setup.")),
+                    ("Capture profile", self._setting_with_hint(self.settings_profile_combo, "Tunes cleanup behavior for laptop speakers, headphones, conference rooms, or debug capture.", visible=True)),
+                ]
+            ),
+            "Device capture",
+        )
+        settings_tabs.addTab(
+            self._settings_section(
+                [
+                    ("AI provider", self._setting_with_hint(self.settings_provider_combo, "Ollama is currently wired for local note generation. OpenAI is reserved for a later provider pass.")),
+                    ("Ollama URL", self._setting_with_hint(self.settings_ollama_url, "Base URL for your Ollama server. Use the same address you use for Ollama API calls.")),
+                    ("Ollama model", self._setting_with_hint(self.settings_ollama_model, "Any installed Ollama model name works here. Run `ollama list` on the Ollama host to see available models.", visible=True)),
+                    ("AI timeout", self._setting_with_hint(self.settings_ai_timeout, "Maximum seconds to wait for notes generation before Nova treats it as failed.")),
+                ]
+            ),
+            "Intelligence",
+        )
+        settings_tabs.addTab(
+            self._settings_section(
+                [
+                    ("WhisperLive", self._setting_with_hint(self.settings_transcription_enabled, "Turn this on to transcribe audio with your WhisperLive server during processing.")),
+                    ("WhisperLive URL", self._setting_with_hint(self.settings_whisper_url, "Base URL for WhisperLive. Nova converts http/https to the matching WebSocket connection.")),
+                    ("Whisper model", self._setting_with_hint(self.settings_whisper_model, "Common values are tiny, base, small, medium, and large-v3. Availability depends on your WhisperLive container/config.", visible=True)),
+                    ("Whisper language", self._setting_with_hint(self.settings_whisper_language, "Use ISO-style language codes such as en. Leave as en for English meetings.")),
+                    ("Voice activity detection", self._setting_with_hint(self.settings_use_vad, "Helps WhisperLive ignore silence and non-speech. Usually leave enabled.")),
+                    ("Transcript cleanup", self._setting_with_hint(self.settings_cross_bleed_cleanup, "Reduces duplicate mic/system bleed and repeated transcript fragments before notes generation.")),
+                    ("Transcription timeout", self._setting_with_hint(self.settings_transcription_timeout, "Maximum seconds to wait for each WhisperLive transcription request.")),
+                    ("Long recording chunk size", self._setting_with_hint(self.settings_long_audio_chunk_seconds, "Long recordings are split into chunks before WhisperLive. Lower this if long meetings disconnect; 120-180 seconds is a good range.", visible=True)),
+                ]
+            ),
+            "Transcription",
+        )
+        panel_layout.addWidget(settings_tabs, stretch=1)
 
         button_row = QHBoxLayout()
         self.settings_refresh_devices_button = QPushButton("Refresh devices")
@@ -1400,17 +1417,31 @@ class MainWindow(QMainWindow):
         layout.addWidget(scroll)
         return page
 
-    def _setting_with_hint(self, control: QWidget, hint: str) -> QWidget:
+    def _settings_section(self, rows: list[tuple[str, QWidget]]) -> QFrame:
+        section = QFrame()
+        section.setObjectName("FormSection")
+        layout = QFormLayout(section)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setLabelAlignment(Qt.AlignLeft)
+        layout.setFormAlignment(Qt.AlignTop)
+        layout.setHorizontalSpacing(18)
+        layout.setVerticalSpacing(12)
+        for label, control in rows:
+            layout.addRow(label, control)
+        return section
+
+    def _setting_with_hint(self, control: QWidget, hint: str, visible: bool = False) -> QWidget:
         container = QWidget()
         container.setObjectName("Transparent")
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
-        hint_label = self._muted_label(hint)
-        hint_label.setWordWrap(True)
         control.setToolTip(hint)
         layout.addWidget(control)
-        layout.addWidget(hint_label)
+        if visible:
+            hint_label = self._muted_label(hint)
+            hint_label.setWordWrap(True)
+            layout.addWidget(hint_label)
         return container
 
     def _placeholder_page(self, title_text: str, body_text: str) -> QWidget:
@@ -1457,6 +1488,14 @@ class MainWindow(QMainWindow):
     def _section_label(text: str) -> QLabel:
         label = QLabel(text)
         label.setObjectName("SectionTitle")
+        return label
+
+    def _status_badge(self, text: str) -> QLabel:
+        label = QLabel(text)
+        label.setObjectName("StatusBadge")
+        label.setProperty("state", self._meeting_status_state(text))
+        label.setAlignment(Qt.AlignCenter)
+        label.setMinimumWidth(92)
         return label
 
     @staticmethod
@@ -2510,7 +2549,12 @@ class MainWindow(QMainWindow):
 
             row = self.meeting_table.rowCount()
             self.meeting_table.insertRow(row)
-            values = [date_text, time_text, title, self._meeting_status_label(status, review_count), str(open_actions), str(review_count)]
+            transcript_path = folder / "transcript.md"
+            has_transcript = transcript_path.exists() and bool(
+                MeetingProcessor._usable_existing_transcript_text(transcript_path.read_text(encoding="utf-8", errors="ignore")).strip()
+            )
+            status_label = self._meeting_status_label(status, review_count, has_transcript)
+            values = [date_text, time_text, title, status_label, str(open_actions), str(review_count)]
             for column, value in enumerate(values):
                 item = SortableTableItem(value)
                 item.setData(Qt.UserRole, str(folder))
@@ -2520,6 +2564,8 @@ class MainWindow(QMainWindow):
                 if column in (4, 5):
                     item.setTextAlignment(Qt.AlignCenter)
                 self.meeting_table.setItem(row, column, item)
+
+            self.meeting_table.setCellWidget(row, 3, self._status_badge(status_label))
 
             open_button = QPushButton("Open")
             open_button.setText("Open meeting")
@@ -2556,9 +2602,9 @@ class MainWindow(QMainWindow):
             return review_count > 0
         if selected_filter == "Has open actions":
             return open_actions > 0
-        if selected_filter == "Processed":
+        if selected_filter == "Complete":
             return status.startswith("processed")
-        if selected_filter == "No transcript":
+        if selected_filter == "Missing transcript":
             transcript_path = folder / "transcript.md"
             if not transcript_path.exists():
                 return True
@@ -2646,10 +2692,24 @@ class MainWindow(QMainWindow):
         notes_panel.setObjectName("Panel")
         notes_layout = QVBoxLayout(notes_panel)
         notes_layout.setContentsMargins(18, 18, 18, 18)
-        notes_layout.addWidget(self._section_label("Notes"))
+        notes_layout.setSpacing(12)
+        notes_path = folder / "notes.md"
+        summary_lines = self._note_section_lines(notes_path, "summary")
+        if summary_lines:
+            summary_card = QFrame()
+            summary_card.setObjectName("RaisedPanel")
+            summary_layout = QVBoxLayout(summary_card)
+            summary_layout.setContentsMargins(14, 12, 14, 12)
+            summary_layout.setSpacing(7)
+            summary_layout.addWidget(self._section_label("Executive summary"))
+            for line in summary_lines[:4]:
+                summary_label = QLabel(line)
+                summary_label.setWordWrap(True)
+                summary_layout.addWidget(summary_label)
+            notes_layout.addWidget(summary_card)
+        notes_layout.addWidget(self._section_label("Structured notes"))
         notes_view = QTextEdit()
         notes_view.setReadOnly(True)
-        notes_path = folder / "notes.md"
         if notes_path.exists():
             notes_view.setMarkdown(self._notes_for_display(notes_path))
         else:
@@ -2667,14 +2727,17 @@ class MainWindow(QMainWindow):
         details_layout = QVBoxLayout(details_panel)
         details_layout.setContentsMargins(16, 16, 16, 16)
         details_layout.setSpacing(14)
-        details_layout.addWidget(self._section_label("Meeting details"))
-        health = QTextEdit()
-        health.setReadOnly(True)
-        health.setMaximumHeight(170)
-        health.setPlainText(self._format_health_summary(metadata))
-        details_layout.addWidget(health)
+        details_layout.addWidget(self._section_label("Meeting intelligence"))
 
         insights = load_or_build_insights(folder)
+        details_layout.addWidget(self._overview_action_items_card(folder, insights))
+        for title_text, items in (
+            ("Key decisions", insights.decisions),
+            ("Scheduling details", insights.dates),
+        ):
+            count_label = QLabel(str(len(items)))
+            card, _items_layout = self._insight_card(title_text, count_label, items or ["None detected"])
+            details_layout.addWidget(card)
         if insights.quality_warnings:
             warning_card = QFrame()
             warning_card.setObjectName("RaisedPanel")
@@ -2685,14 +2748,12 @@ class MainWindow(QMainWindow):
                 warning_layout.addWidget(self._muted_label(f"- {warning}"))
             details_layout.addWidget(warning_card)
 
-        details_layout.addWidget(self._overview_action_items_card(folder, insights))
-        for title_text, items in (
-            ("Key decisions", insights.decisions),
-            ("Scheduling details", insights.dates),
-        ):
-            count_label = QLabel(str(len(items)))
-            card, _items_layout = self._insight_card(title_text, count_label, items or ["None detected"])
-            details_layout.addWidget(card)
+        details_layout.addWidget(self._section_label("Meeting details"))
+        health = QTextEdit()
+        health.setReadOnly(True)
+        health.setMaximumHeight(145)
+        health.setPlainText(self._format_health_summary(metadata))
+        details_layout.addWidget(health)
         details_layout.addStretch()
         details_scroll.setWidget(details_panel)
 
@@ -2754,6 +2815,26 @@ class MainWindow(QMainWindow):
         text = re.sub(r"\bSource:\s*<span[^>]*>[^<]+</span>;?\s*", "", text)
         text = re.sub(r"\bSource:\s*[^;\n]+;?\s*", "", text)
         return text
+
+    @classmethod
+    def _note_section_lines(cls, notes_path: Path, section_name: str) -> list[str]:
+        if not notes_path.exists():
+            return []
+        target = section_name.lower()
+        in_section = False
+        lines: list[str] = []
+        for raw_line in notes_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            line = cls._plain_note_text(raw_line).strip()
+            if line.startswith("## "):
+                in_section = target in line.lower()
+                continue
+            if in_section and line.startswith("-"):
+                item = line.lstrip("- ").strip()
+                if item and item.lower().rstrip(".") not in {"none", "none captured"}:
+                    lines.append(item)
+            elif in_section and line.startswith("## "):
+                break
+        return lines
 
     def _forget_overview_window(self, dialog: QDialog) -> None:
         if dialog in self.meeting_overview_windows:
@@ -2947,10 +3028,30 @@ class MainWindow(QMainWindow):
             return parts[0], parts[1] if len(parts) > 1 else ""
 
     @staticmethod
-    def _meeting_status_label(status: str, review_count: int) -> str:
+    def _meeting_status_label(status: str, review_count: int, has_transcript: bool = True) -> str:
+        if not has_transcript:
+            return "Missing transcript"
         if review_count:
-            return f"{status} / needs review"
-        return status
+            return "Needs review"
+        normalized = status.lower()
+        if normalized.startswith("processed"):
+            return "Complete"
+        if normalized in {"recording", "processing", "transcribing"}:
+            return "Processing"
+        if normalized in {"stub", "draft", "unknown"}:
+            return "Draft"
+        return status.replace("_", " ").title()
+
+    @staticmethod
+    def _meeting_status_state(label: str) -> str:
+        normalized = label.lower()
+        if normalized == "complete":
+            return "complete"
+        if "review" in normalized or "missing" in normalized:
+            return "review"
+        if "processing" in normalized:
+            return "processing"
+        return "draft"
 
     @staticmethod
     def _meeting_sort_key(

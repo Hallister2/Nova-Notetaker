@@ -333,6 +333,60 @@ Potential future insight improvements:
   - Add a small "Open latest meeting" action on Live Capture after processing completes.
   - Consider a transcript quality panel showing audio duration, transcription chunks, repeated-fragment cleanup count, and note-generation retry status.
 
+## 2026-05-26 Update - Product Polish Pass
+
+- Reviewed `.notes/ChatGPT Scratchpad` and implemented the recommended UI/product cohesion pass.
+
+- Meetings page:
+  - Added human-readable status badge presentation.
+  - Replaced backend-feeling status labels with:
+    - Complete
+    - Needs review
+    - Processing
+    - Draft
+    - Missing transcript
+  - Updated filter labels to match product language:
+    - Complete
+    - Missing transcript
+  - Status badges now use color/state semantics rather than raw text alone.
+
+- Live Capture:
+  - Promoted the timer to a larger hero metric style.
+  - Renamed the status area to "Recording state" to make the workflow clearer.
+
+- Meeting Overview:
+  - Added an executive summary card above the structured notes when summary bullets are available.
+  - Renamed the main notes area to "Structured notes".
+  - Reordered the right rail so meeting intelligence appears before technical details:
+    - Action items
+    - Key decisions
+    - Scheduling details
+    - Review needed
+    - Meeting details
+  - This moves the overview closer to an executive briefing instead of a notes/transcript viewer.
+
+- Settings:
+  - Converted the settings wall into grouped tabs:
+    - Device capture
+    - Intelligence
+    - Transcription
+  - Moved most help text into tooltips.
+  - Kept inline helper text only for higher-friction settings such as capture profile, Ollama model, Whisper model, and long recording chunk size.
+
+- Templates:
+  - Converted the Templates page into two tabs:
+    - Meeting profiles
+    - Note templates
+  - This keeps the page shorter and avoids pushing the note-template editor below the fold.
+
+- Design system:
+  - Added `.notes/UI Design System`.
+  - Captures product feel, theme guidance, color usage, typography, spacing, badges, page hierarchy, settings/templates rules, and responsive testing rules.
+
+- Verification:
+  - `py_compile` passed for changed UI/workflow files.
+  - Relevant unit suite passed: 27 tests OK.
+
 ## Communication Notes For ChatGPT / Design Team
 
 When giving design feedback, focus on:

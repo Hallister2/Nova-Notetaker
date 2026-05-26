@@ -1,0 +1,184 @@
+# Nova Notetaker UI Design System
+
+Last updated: 2026-05-26
+
+Purpose: Keep Nova Notetaker visually consistent as it evolves from a prototype into a calm enterprise meeting-intelligence app.
+
+## Product Feel
+
+Nova should feel:
+
+- Calm.
+- Reliable.
+- Local-first.
+- Enterprise-safe.
+- Quietly intelligent.
+- Focused on meeting outcomes.
+
+Nova should avoid:
+
+- Sci-fi HUD styling.
+- Heavy neon.
+- Developer-console language.
+- Overloaded dashboards.
+- Showing infrastructure details unless troubleshooting.
+
+## Themes
+
+Primary theme:
+
+- Executive Dark.
+
+Secondary themes:
+
+- Clean Professional for daytime/accessibility.
+- Modern Gradient as a restrained expressive option.
+
+Executive Dark remains the default product identity.
+
+## Color Usage
+
+Orange is the brand accent. Use it sparingly for:
+
+- Primary actions.
+- Active navigation.
+- Selected tabs.
+- Important links.
+- Recording/focus accents.
+- Dates and review highlights.
+
+Avoid orange on every card border or background. Most surfaces should stay matte charcoal/graphite.
+
+Status colors:
+
+- Success / complete: green.
+- Recording / error: red.
+- Review / attention: orange.
+- Informational / processing: blue.
+- Draft / neutral: muted gray.
+
+## Typography
+
+Use simple Segoe UI hierarchy:
+
+- Page title: 24px, bold.
+- Panel title: 18px, bold.
+- Timer / hero metric: 28px, bold.
+- Body text: 13px.
+- Section labels: 12px, uppercase, muted.
+- Helper text: 12px, muted.
+
+Avoid excessive letter spacing except the Nova brand mark.
+
+## Layout
+
+Main app structure:
+
+- Left sidebar for navigation.
+- Center workspace for active work.
+- Right rail only when insights are useful.
+- Bottom footer for quiet system state.
+
+Recommended spacing:
+
+- Page margins: 28-34px desktop, 16-22px compact.
+- Panel padding: 18-22px.
+- Card padding: 14-16px.
+- Control spacing: 8-14px.
+
+Cards should use 8px radius or less.
+
+## Badges
+
+Meeting status badges should be human-readable:
+
+- Complete.
+- Needs review.
+- Processing.
+- Draft.
+- Missing transcript.
+
+Avoid exposing backend strings like `processed_with_warnings` in the main UI.
+
+Insight badges:
+
+- Owner: neutral.
+- Due date: orange/date.
+- Confidence high: green.
+- Confidence medium: amber.
+- Confidence low: red.
+- State/status: orange or neutral.
+
+## Live Capture
+
+Primary hierarchy:
+
+1. Meeting title.
+2. Recording state.
+3. Timer.
+4. Capture controls.
+5. Transcript.
+6. Insights.
+
+The user should always understand:
+
+- Whether Nova is recording.
+- How long recording or processing has been running.
+- Whether mic/system audio are active.
+- What Nova has produced so far.
+
+## Meetings
+
+Meetings page should feel like an operational index:
+
+- Sortable.
+- Filterable.
+- Human-readable statuses.
+- Clear open action and review counts.
+- Obvious Open meeting action.
+
+This page should avoid feeling like a raw file browser.
+
+## Meeting Overview
+
+The overview should feel like an executive briefing:
+
+1. Executive summary.
+2. Action items.
+3. Key decisions.
+4. Scheduling details.
+5. Review needed.
+6. Structured notes.
+7. Meeting details / health.
+
+Raw transcript and technical health should be available but visually secondary.
+
+## Settings And Templates
+
+Settings should be grouped by concept:
+
+- Device capture.
+- Intelligence.
+- Transcription.
+
+Most explanatory text should live in tooltips. Show inline helper text only for settings where wrong values are common or costly.
+
+Templates should separate:
+
+- Meeting profiles: context and business purpose.
+- Note templates: output structure and writing rules.
+
+## Responsive Rules
+
+Validate important UI changes at:
+
+- 1366x768.
+- High DPI / Windows scaling.
+- Wide desktop.
+- Narrow window.
+
+When space gets tight:
+
+- Hide secondary rails before compressing controls into unreadability.
+- Preserve main workflow controls.
+- Keep text wrapped instead of adding horizontal scroll.
