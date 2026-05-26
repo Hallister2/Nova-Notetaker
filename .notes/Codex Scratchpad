@@ -479,3 +479,92 @@ When giving product feedback, focus on:
 - How confidently the app communicates recording/transcription status.
 - How users review and act on previous meetings.
 - Whether the overview popout or an in-app overview page is the better long-term design.
+
+## 2026-05-26 Update - Functional Roadmap Batch 1
+
+- Started implementing the "next recommendations" feature set from the new chat.
+- Added a first-class Actions sidebar page:
+  - Follow-up refinement: Actions was moved under the Calendar page as an `Actions` tab instead of remaining a standalone sidebar item.
+  - Filters by owner, status, and confidence.
+  - Shows cross-meeting action items.
+  - Lets action status be updated directly from the table.
+  - Opens the source meeting overview from each action row.
+- Wired the previously disabled Live Capture marker controls:
+  - `Mark Important` writes an important marker while recording.
+  - `Add Note` writes a timestamped free-text marker while recording.
+  - Markers are saved as `markers.json` in the meeting folder.
+  - Meeting Overview now shows a Meeting markers card.
+- Added a Settings `Run preflight` button:
+  - Checks microphone/default capture state.
+  - Checks WASAPI loopback resolution.
+  - Checks meeting storage writability.
+  - Checks Ollama reachability/model presence.
+  - Checks WhisperLive WebSocket reachability when transcription is enabled.
+- Added template/profile usability helpers:
+  - Duplicate meeting profile.
+  - Preview meeting profile prompt context.
+  - Duplicate note template.
+  - Preview note template prompt context.
+- Added lightweight meeting index foundation:
+  - New `app/storage/meeting_index.py`.
+  - Writes `meetings/index.json` during meeting refresh.
+  - Captures title, status, transcript availability, open action count, review count, owners, dates, and searchable text.
+- Added action lifecycle setting:
+  - `config/settings.json` now has `review.action_auto_close_days`, default `30`.
+  - Settings has a Review tab where this can be changed.
+  - Actions older than the configured meeting age are marked `closed`.
+  - `0` disables auto-close.
+- Verification:
+  - `py_compile` passed for changed app files.
+  - Full test discovery passed: 30 tests OK.
+  - Offscreen UI instantiation succeeded with 7 pages after Actions moved under Calendar.
+
+Remaining roadmap items:
+
+- True near-realtime WhisperLive transcript streaming is still pending.
+- `main_window.py` still needs more page/component extraction before the next large UI expansion.
+
+## 2026-05-26 Update - Session Finish Pass
+
+- Calendar approval/edit workflow:
+  - Calendar date rows now include an `Approved` checkbox.
+  - Date and context are editable directly in the table.
+  - Review edits are persisted per meeting in `calendar_review.json`.
+  - Calendar `.ics` export now exports approved candidates only.
+- Calendar/Actions information architecture:
+  - Actions remains inside the Calendar workspace as an `Actions` tab.
+  - Calendar now acts as the broader follow-up workspace for dates and action items.
+- In-app Meeting Overview workspace:
+  - Added a hidden workspace page in the main stack.
+  - Meetings table now has `Open` popout and `Workspace` buttons.
+  - Search and Actions open meetings into the workspace by default.
+  - Workspace includes Structured notes, Transcript, and Details tabs.
+- Passive speaker rename:
+  - Added speaker alias support backed by per-meeting `speaker_aliases.json`.
+  - Rename Speakers prompts for transcript headings such as `You` and `Meeting`.
+  - Aliases are applied to transcript display without rewriting raw `transcript.md`.
+- Main-window split:
+  - Added `app/ui/review_helpers.py` for calendar review keys/state, speaker aliases, and ICS/string helpers.
+  - This is the first extraction from `main_window.py`; more UI page extraction is still recommended later.
+- Verification:
+  - `py_compile` passed for changed app files.
+  - Full test discovery passed: 32 tests OK.
+  - Offscreen UI smoke check succeeded with 8 stacked pages and workspace navigation.
+
+## 2026-05-26 Update - Layout Constraint Pass
+
+- Reviewed page layouts for elements exceeding boundaries after the Calendar/Actions/Workspace additions.
+- Tightened fixed-width pressure points:
+  - Meetings table action/status columns reduced and constrained.
+  - Meetings bottom command buttons now flow through a compact grid instead of one long horizontal row.
+  - Actions filters now use a grid layout.
+  - Actions table fixed columns were reduced and horizontal scrolling is kept internal to the table.
+  - Calendar date review table and filter/export controls now allow shrinkage.
+  - Calendar widget minimum width reduced for narrower windows.
+  - Search results table now allows internal horizontal scrolling.
+  - Settings command buttons now use expanding sizing instead of forcing a wide row.
+- Reduced table/header padding slightly in `app/ui/styles.py`.
+- Verification:
+  - Offscreen geometry smoke check at 780x560, 1024x680, and 1366x768 found 0 visible child-boundary violations.
+  - `py_compile` passed for changed UI files.
+  - Full test discovery passed: 32 tests OK.

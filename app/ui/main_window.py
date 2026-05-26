@@ -25,11 +25,13 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHeaderView,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMainWindow,
     QMessageBox,
     QAbstractItemView,
+    QSizePolicy,
     QRadioButton,
     QPushButton,
     QProgressBar,
@@ -50,8 +52,20 @@ from app.core.profiles import MeetingProfile, ProfileStore
 from app.core.settings import APP_ROOT, load_settings, save_settings
 from app.core.templates import NoteTemplate, TemplateStore
 from app.intelligence.insights import InsightItem, MeetingInsights, load_or_build_insights, write_insights_json
+from app.storage.meeting_index import write_meeting_index
 from app.storage.meeting_store import MeetingMetadata, MeetingStore
 from app.ui.orb_widget import OrbWidget
+from app.ui.review_helpers import (
+    apply_speaker_aliases_to_markdown,
+    candidate_key,
+    ics_escape,
+    read_calendar_review,
+    read_speaker_aliases,
+    safe_file_label,
+    transcript_speakers,
+    write_calendar_review,
+    write_speaker_aliases,
+)
 from app.ui.styles import THEME_LABELS, build_stylesheet
 from app.workflows.meeting_processor import MeetingProcessor
 
@@ -67,12 +81,13 @@ CAPTURE_PROFILES = {
 DEFAULT_LOOPBACK_DEVICE = "__default_wasapi_loopback__"
 DEFAULT_MIC_DEVICE = "__default_microphone__"
 ASSETS_DIR = APP_ROOT / "assets"
+CLOSED_ACTION_STATUSES = {"done", "closed"}
 
 NAV_ASSETS = [
     ("Capture - Default.png", "Capture - Active.png"),
     ("Meetings - Default.png", "Meetings - Active.png"),
-    ("Review - Default.png", "Review - Active.png"),
     ("Meetings - Default.png", "Meetings - Active.png"),
+    ("Review - Default.png", "Review - Active.png"),
     ("Review - Default.png", "Review - Active.png"),
     ("Templates - Default.png", "Templates - Active.png"),
     ("Settings - Default.png", "Settings - Active.png"),
@@ -336,6 +351,7 @@ class MainWindow(QMainWindow):
         self.device_manager = AudioDeviceManager()
         self.meeting_store = MeetingStore()
         self.meeting_folder: Path | None = None
+        self.overview_workspace_folder: Path | None = None
         self.metadata: MeetingMetadata | None = None
         self.worker_thread: QThread | None = None
         self.worker: CaptureWorker | None = None
@@ -392,6 +408,8 @@ class MainWindow(QMainWindow):
         self.pages = QStackedWidget()
         self.pages.addWidget(self._build_live_page())
         self.pages.addWidget(self._build_meetings_page())
+        self.overview_workspace_page = self._build_overview_workspace_page()
+        self.pages.addWidget(self.overview_workspace_page)
         self.pages.addWidget(self._build_search_page())
         self.pages.addWidget(self._build_calendar_page())
         self.pages.addWidget(self._build_logs_page())
@@ -428,7 +446,8 @@ class MainWindow(QMainWindow):
             button.setCursor(Qt.PointingHandCursor)
             button.setIcon(self._nav_icon(index, active=False))
             button.setIconSize(QSize(22, 22))
-            button.clicked.connect(lambda checked=False, page=index: self._set_active_nav(page))
+            stack_index = index if index < 2 else index + 1
+            button.clicked.connect(lambda checked=False, page=stack_index: self._set_active_nav(page))
             layout.addWidget(button)
             self.nav_buttons.append(button)
 
@@ -699,6 +718,7 @@ class MainWindow(QMainWindow):
         layout.setSpacing(16)
         self.mark_important_button = QPushButton("Mark Important")
         self.mark_important_button.setEnabled(False)
+        self.mark_important_button.clicked.connect(self.mark_current_meeting_important)
         self.open_latest_button = QPushButton("Open latest meeting")
         self.open_latest_button.setEnabled(False)
         self.open_latest_button.clicked.connect(self.open_latest_meeting)
@@ -709,6 +729,7 @@ class MainWindow(QMainWindow):
         self.stop_button = self.recording_button
         self.add_note_button = QPushButton("Add Note")
         self.add_note_button.setEnabled(False)
+        self.add_note_button.clicked.connect(self.add_current_meeting_note)
         layout.addWidget(self.mark_important_button)
         layout.addWidget(self.open_latest_button)
         layout.addWidget(self.recording_button, stretch=1)
@@ -779,6 +800,8 @@ class MainWindow(QMainWindow):
             "Captured meetings will appear here after your first recording.",
         )
         self.meeting_table = QTableWidget(0, 7)
+        self.meeting_table.setMinimumWidth(0)
+        self.meeting_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.meeting_table.setHorizontalHeaderLabels(["Date", "Time", "Meeting Name", "Status", "Actions", "Review", "Open"])
         self.meeting_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.meeting_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -791,19 +814,27 @@ class MainWindow(QMainWindow):
         header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(2, QHeaderView.Stretch)
         header.setSectionResizeMode(3, QHeaderView.Fixed)
-        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.Fixed)
+        header.setSectionResizeMode(5, QHeaderView.Fixed)
         header.setSectionResizeMode(6, QHeaderView.Fixed)
         self.meeting_table.setColumnWidth(3, 150)
-        self.meeting_table.setColumnWidth(6, 150)
+        self.meeting_table.setColumnWidth(4, 76)
+        self.meeting_table.setColumnWidth(5, 76)
+        self.meeting_table.setColumnWidth(6, 178)
+        self.meeting_table.verticalHeader().setDefaultSectionSize(44)
         filters = QHBoxLayout()
+        filters.setSpacing(10)
         self.meeting_filter_combo = QComboBox()
         self.meeting_filter_combo.addItems(["All meetings", "Needs review", "Has open actions", "Complete", "Missing transcript"])
         self.meeting_filter_combo.currentIndexChanged.connect(self.refresh_meetings)
+        self.meeting_filter_combo.setMinimumHeight(38)
+        self.meeting_filter_combo.setMinimumWidth(190)
         filters.addWidget(QLabel("Filter"))
         filters.addWidget(self.meeting_filter_combo)
         filters.addStretch()
-        archive_buttons = QHBoxLayout()
+        archive_buttons = QGridLayout()
+        archive_buttons.setHorizontalSpacing(8)
+        archive_buttons.setVerticalSpacing(8)
         self.refresh_meetings_button = QPushButton("Refresh")
         self.refresh_meetings_button.clicked.connect(self.refresh_meetings)
         self.reprocess_button = QPushButton("Reprocess")
@@ -818,7 +849,7 @@ class MainWindow(QMainWindow):
         self.export_calendar_button.clicked.connect(self.export_selected_calendar_ics)
         self.delete_meeting_button = QPushButton("Delete selected")
         self.delete_meeting_button.clicked.connect(self.delete_selected_meetings)
-        for button in (
+        archive_button_list = (
             self.refresh_meetings_button,
             self.reprocess_button,
             self.batch_reprocess_button,
@@ -826,8 +857,11 @@ class MainWindow(QMainWindow):
             self.export_html_button,
             self.export_calendar_button,
             self.delete_meeting_button,
-        ):
-            archive_buttons.addWidget(button)
+        )
+        for index, button in enumerate(archive_button_list):
+            button.setMinimumWidth(0)
+            button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            archive_buttons.addWidget(button, index // 4, index % 4)
         self.archive_status = self._muted_label("Ready")
         meetings_panel_layout.addWidget(meetings_title)
         meetings_panel_layout.addLayout(filters)
@@ -865,6 +899,100 @@ class MainWindow(QMainWindow):
         layout.addStretch()
         return panel
 
+    def _build_overview_workspace_page(self) -> QWidget:
+        page = QWidget()
+        self.overview_workspace_layout = QVBoxLayout(page)
+        self.overview_workspace_layout.setContentsMargins(34, 28, 18, 28)
+        self.overview_workspace_layout.setSpacing(14)
+        title = QLabel("Meeting Overview")
+        title.setObjectName("Title")
+        self.overview_workspace_layout.addWidget(title)
+        self.overview_workspace_empty = self._empty_state_widget(
+            "meetings",
+            "No meeting selected",
+            "Open a meeting from Meetings, Search, Calendar, or Actions.",
+        )
+        self.overview_workspace_layout.addWidget(self.overview_workspace_empty, stretch=1)
+        return page
+
+    def _build_actions_page(self, embedded: bool = False) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        if embedded:
+            layout.setContentsMargins(0, 0, 0, 0)
+        else:
+            layout.setContentsMargins(34, 28, 18, 28)
+        panel = QFrame()
+        panel.setObjectName("Panel")
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(18, 18, 18, 18)
+        panel_layout.setSpacing(12)
+
+        title = QLabel("Actions")
+        title.setObjectName("Title")
+        panel_layout.addWidget(title)
+        panel_layout.addWidget(self._muted_label("Review open action items across meetings and update follow-up status."))
+
+        filters = QGridLayout()
+        filters.setHorizontalSpacing(10)
+        filters.setVerticalSpacing(8)
+        self.action_owner_filter = QLineEdit()
+        self.action_owner_filter.setPlaceholderText("Filter owner")
+        self.action_owner_filter.setMinimumHeight(38)
+        self.action_owner_filter.textChanged.connect(self._refresh_action_dashboard)
+        self.action_status_filter = QComboBox()
+        self.action_status_filter.addItems(["Open work", "open", "in progress", "deferred", "done", "closed", "All statuses"])
+        self.action_status_filter.setMinimumHeight(38)
+        self.action_status_filter.setMinimumWidth(150)
+        self.action_status_filter.currentIndexChanged.connect(self._refresh_action_dashboard)
+        self.action_confidence_filter = QComboBox()
+        self.action_confidence_filter.addItems(["All confidence", "High", "Medium", "Low"])
+        self.action_confidence_filter.setMinimumHeight(38)
+        self.action_confidence_filter.setMinimumWidth(160)
+        self.action_confidence_filter.currentIndexChanged.connect(self._refresh_action_dashboard)
+        filters.addWidget(QLabel("Owner"), 0, 0)
+        filters.addWidget(self.action_owner_filter, 0, 1)
+        filters.addWidget(QLabel("Status"), 0, 2)
+        filters.addWidget(self.action_status_filter, 0, 3)
+        filters.addWidget(QLabel("Confidence"), 0, 4)
+        filters.addWidget(self.action_confidence_filter, 0, 5)
+        filters.setColumnStretch(1, 1)
+        panel_layout.addLayout(filters)
+
+        self.actions_empty_state = self._empty_state_widget(
+            "actions",
+            "No action items",
+            "Open follow-ups from processed meetings will appear here.",
+        )
+        self.action_dashboard_table = QTableWidget(0, 7)
+        self.action_dashboard_table.setMinimumWidth(0)
+        self.action_dashboard_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.action_dashboard_table.setHorizontalHeaderLabels(["Meeting", "Owner", "Action", "Due", "Confidence", "Status", "Open"])
+        self.action_dashboard_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.action_dashboard_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.action_dashboard_table.verticalHeader().setVisible(False)
+        self.action_dashboard_table.verticalHeader().setDefaultSectionSize(46)
+        self.action_dashboard_table.setWordWrap(False)
+        action_header = self.action_dashboard_table.horizontalHeader()
+        action_header.setSectionResizeMode(0, QHeaderView.Fixed)
+        action_header.setSectionResizeMode(1, QHeaderView.Fixed)
+        action_header.setSectionResizeMode(2, QHeaderView.Stretch)
+        action_header.setSectionResizeMode(3, QHeaderView.Fixed)
+        action_header.setSectionResizeMode(4, QHeaderView.Fixed)
+        action_header.setSectionResizeMode(5, QHeaderView.Fixed)
+        action_header.setSectionResizeMode(6, QHeaderView.Fixed)
+        self.action_dashboard_table.setColumnWidth(0, 190)
+        self.action_dashboard_table.setColumnWidth(1, 96)
+        self.action_dashboard_table.setColumnWidth(3, 128)
+        self.action_dashboard_table.setColumnWidth(4, 98)
+        self.action_dashboard_table.setColumnWidth(5, 132)
+        self.action_dashboard_table.setColumnWidth(6, 96)
+
+        panel_layout.addWidget(self.actions_empty_state, stretch=1)
+        panel_layout.addWidget(self.action_dashboard_table, stretch=1)
+        layout.addWidget(panel)
+        return page
+
     def _build_search_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -892,6 +1020,8 @@ class MainWindow(QMainWindow):
             "Search meeting titles, notes, transcripts, owners, and dates.",
         )
         self.search_results_table = QTableWidget(0, 4)
+        self.search_results_table.setMinimumWidth(0)
+        self.search_results_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.search_results_table.setHorizontalHeaderLabels(["Meeting", "File", "Match", "Open"])
         self.search_results_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.search_results_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -902,7 +1032,7 @@ class MainWindow(QMainWindow):
         search_header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
         search_header.setSectionResizeMode(2, QHeaderView.Stretch)
         search_header.setSectionResizeMode(3, QHeaderView.Fixed)
-        self.search_results_table.setColumnWidth(3, 130)
+        self.search_results_table.setColumnWidth(3, 120)
         panel_layout.addWidget(self.search_empty_state, stretch=1)
         panel_layout.addWidget(self.search_results_table, stretch=1)
         layout.addWidget(panel)
@@ -912,30 +1042,43 @@ class MainWindow(QMainWindow):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(34, 28, 18, 28)
+        layout.setSpacing(14)
+
+        title = QLabel("Calendar")
+        title.setObjectName("Title")
+        subtitle = self._muted_label("Review meeting dates and action follow-ups in one workspace.")
+        layout.addWidget(title)
+        layout.addWidget(subtitle)
+
+        review_tabs = QTabWidget()
         panel = QFrame()
         panel.setObjectName("Panel")
         panel_layout = QVBoxLayout(panel)
         panel_layout.setContentsMargins(18, 18, 18, 18)
-        title = QLabel("Calendar")
+        title = QLabel("Dates")
         title.setObjectName("Title")
         panel_layout.addWidget(title)
         panel_layout.addWidget(self._muted_label("Review detected dates by meeting and export only what you need."))
 
-        calendar_header = QHBoxLayout()
-        calendar_header.addWidget(QLabel("Meeting"))
+        calendar_header = QGridLayout()
+        calendar_header.setHorizontalSpacing(10)
+        calendar_header.addWidget(QLabel("Meeting"), 0, 0)
         self.calendar_meeting_filter = QComboBox()
         self.calendar_meeting_filter.currentIndexChanged.connect(self._refresh_calendar_candidates)
-        calendar_header.addWidget(self.calendar_meeting_filter, stretch=1)
+        self.calendar_meeting_filter.setMinimumWidth(0)
+        calendar_header.addWidget(self.calendar_meeting_filter, 0, 1)
         self.export_all_calendar_button = QPushButton("Export visible dates")
         self.export_all_calendar_button.clicked.connect(self.export_all_calendar_ics)
-        calendar_header.addWidget(self.export_all_calendar_button)
+        self.export_all_calendar_button.setMinimumWidth(0)
+        calendar_header.addWidget(self.export_all_calendar_button, 0, 2)
+        calendar_header.setColumnStretch(1, 1)
         panel_layout.addLayout(calendar_header)
 
         calendar_grid = QGridLayout()
         calendar_grid.setSpacing(16)
         self.calendar_widget = QCalendarWidget()
         self.calendar_widget.setGridVisible(True)
-        self.calendar_widget.setMinimumWidth(280)
+        self.calendar_widget.setMinimumWidth(220)
         calendar_grid.addWidget(self.calendar_widget, 0, 0)
         right_side = QWidget()
         right_layout = QVBoxLayout(right_side)
@@ -945,24 +1088,30 @@ class MainWindow(QMainWindow):
             "No calendar candidates",
             "Detected dates from meetings will appear here.",
         )
-        self.calendar_table = QTableWidget(0, 4)
-        self.calendar_table.setHorizontalHeaderLabels(["Meeting", "Date", "Context", "Confidence"])
+        self.calendar_table = QTableWidget(0, 5)
+        self.calendar_table.setMinimumWidth(0)
+        self.calendar_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.calendar_table.setHorizontalHeaderLabels(["Approved", "Meeting", "Date", "Context", "Confidence"])
         self.calendar_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.calendar_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.calendar_table.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed)
         self.calendar_table.verticalHeader().setVisible(False)
         self.calendar_table.itemSelectionChanged.connect(self._calendar_row_selected)
+        self.calendar_table.itemChanged.connect(self._calendar_item_changed)
         calendar_table_header = self.calendar_table.horizontalHeader()
         calendar_table_header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         calendar_table_header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        calendar_table_header.setSectionResizeMode(2, QHeaderView.Stretch)
-        calendar_table_header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        calendar_table_header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        calendar_table_header.setSectionResizeMode(3, QHeaderView.Stretch)
+        calendar_table_header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
         right_layout.addWidget(self.calendar_empty_state, stretch=1)
         right_layout.addWidget(self.calendar_table, stretch=1)
         calendar_grid.addWidget(right_side, 0, 1)
         calendar_grid.setColumnStretch(0, 0)
         calendar_grid.setColumnStretch(1, 1)
         panel_layout.addLayout(calendar_grid, stretch=1)
-        layout.addWidget(panel)
+        review_tabs.addTab(panel, "Dates")
+        review_tabs.addTab(self._build_actions_page(embedded=True), "Actions")
+        layout.addWidget(review_tabs, stretch=1)
         return page
 
     def _build_logs_page(self) -> QWidget:
@@ -1052,9 +1201,15 @@ class MainWindow(QMainWindow):
         list_buttons = QHBoxLayout()
         self.new_profile_button = QPushButton("New profile")
         self.new_profile_button.clicked.connect(self.new_profile)
+        self.duplicate_profile_button = QPushButton("Duplicate")
+        self.duplicate_profile_button.clicked.connect(self.duplicate_profile)
+        self.preview_profile_button = QPushButton("Preview")
+        self.preview_profile_button.clicked.connect(self.preview_profile_prompt)
         self.delete_profile_button = QPushButton("Delete")
         self.delete_profile_button.clicked.connect(self.delete_profile)
         list_buttons.addWidget(self.new_profile_button)
+        list_buttons.addWidget(self.duplicate_profile_button)
+        list_buttons.addWidget(self.preview_profile_button)
         list_buttons.addWidget(self.delete_profile_button)
         list_layout.addLayout(list_buttons)
 
@@ -1139,9 +1294,15 @@ class MainWindow(QMainWindow):
         list_buttons = QHBoxLayout()
         self.new_template_button = QPushButton("New template")
         self.new_template_button.clicked.connect(self.new_template)
+        self.duplicate_template_button = QPushButton("Duplicate")
+        self.duplicate_template_button.clicked.connect(self.duplicate_template)
+        self.preview_template_button = QPushButton("Preview")
+        self.preview_template_button.clicked.connect(self.preview_template_prompt)
         self.delete_template_button = QPushButton("Delete")
         self.delete_template_button.clicked.connect(self.delete_template)
         list_buttons.addWidget(self.new_template_button)
+        list_buttons.addWidget(self.duplicate_template_button)
+        list_buttons.addWidget(self.preview_template_button)
         list_buttons.addWidget(self.delete_template_button)
         list_layout.addLayout(list_buttons)
 
@@ -1252,6 +1413,44 @@ class MainWindow(QMainWindow):
         self.profile_name_edit.setText("New Profile")
         self.profile_name_edit.setFocus()
         self.profile_name_edit.selectAll()
+
+    def duplicate_profile(self) -> None:
+        profile = next((item for item in self.meeting_profiles if item.id == self.active_profile_id), None)
+        if profile is None:
+            return
+        existing_ids = {item.id for item in self.meeting_profiles}
+        name = f"{profile.name} Copy"
+        duplicate = MeetingProfile(
+            id=self.profile_store.make_id(name, existing_ids),
+            name=name,
+            category=profile.category,
+            company_conducting=profile.company_conducting,
+            companies_attending=profile.companies_attending,
+            default_meeting_title_prefix=profile.default_meeting_title_prefix,
+            default_note_template_id=profile.default_note_template_id,
+            ai_context=profile.ai_context,
+            notes_focus=profile.notes_focus,
+        )
+        profiles = [*self.meeting_profiles, duplicate]
+        profiles.sort(key=lambda item: (item.category.lower(), item.name.lower()))
+        self.profile_store.write_profiles(profiles)
+        self._populate_profile_combo()
+        self.refresh_profiles_table(duplicate.id)
+        self.log(f"Duplicated meeting profile: {profile.name}")
+
+    def preview_profile_prompt(self) -> None:
+        profile = MeetingProfile(
+            id=self.active_profile_id or "preview",
+            name=self.profile_name_edit.text().strip() or "Preview Profile",
+            category=self.profile_category_edit.text().strip() or "General Meeting",
+            company_conducting=self.profile_company_conducting_edit.text().strip(),
+            companies_attending=self.profile_companies_attending_edit.text().strip(),
+            default_meeting_title_prefix=self.profile_title_prefix_edit.text().strip(),
+            default_note_template_id=str(self.profile_default_template_combo.currentData() or ""),
+            ai_context=self.profile_context_edit.toPlainText().strip(),
+            notes_focus=self.profile_focus_edit.toPlainText().strip(),
+        )
+        QMessageBox.information(self, "Profile Preview", profile.to_prompt_context())
 
     def save_profile(self) -> None:
         name = self.profile_name_edit.text().strip()
@@ -1379,6 +1578,42 @@ class MainWindow(QMainWindow):
         self.template_name_edit.setFocus()
         self.template_name_edit.selectAll()
 
+    def duplicate_template(self) -> None:
+        template = next((item for item in self.note_templates if item.id == self.active_template_id), None)
+        if template is None:
+            return
+        existing_ids = {item.id for item in self.note_templates}
+        name = f"{template.name} Copy"
+        duplicate = NoteTemplate(
+            id=self.template_store.make_id(name, existing_ids),
+            name=name,
+            category=template.category,
+            description=template.description,
+            notes_focus=template.notes_focus,
+            custom_instructions=template.custom_instructions,
+            preferred_sections=template.preferred_sections,
+        )
+        templates = [*self.note_templates, duplicate]
+        templates.sort(key=lambda item: (item.category.lower(), item.name.lower()))
+        self.template_store.write_templates(templates)
+        self._populate_template_combo()
+        self._populate_profile_default_template_combo()
+        self.refresh_templates_table(duplicate.id)
+        self.log(f"Duplicated note template: {template.name}")
+
+    def preview_template_prompt(self) -> None:
+        template = NoteTemplate(
+            id=self.active_template_id or "preview",
+            name=self.template_name_edit.text().strip() or "Preview Template",
+            category=self.template_category_edit.text().strip() or "General",
+            description=self.template_description_edit.text().strip(),
+            notes_focus=self.template_focus_edit.toPlainText().strip(),
+            custom_instructions=self.template_custom_edit.toPlainText().strip(),
+            preferred_sections=self.template_sections_edit.text().strip()
+            or "Summary, Key Decisions, Action Items, Important Dates, Risks / Blockers, Follow-ups",
+        )
+        QMessageBox.information(self, "Template Preview", template.to_prompt_context())
+
     def save_template(self) -> None:
         name = self.template_name_edit.text().strip()
         if not name:
@@ -1481,6 +1716,9 @@ class MainWindow(QMainWindow):
         self.settings_ai_timeout = QSpinBox()
         self.settings_ai_timeout.setRange(10, 1800)
         self.settings_ai_timeout.setValue(int(self.settings["ai"].get("timeout_seconds", 180)))
+        self.settings_action_auto_close_days = QSpinBox()
+        self.settings_action_auto_close_days.setRange(0, 3650)
+        self.settings_action_auto_close_days.setValue(int(self.settings.get("review", {}).get("action_auto_close_days", 30)))
 
         self.settings_transcription_enabled = QCheckBox("WhisperLive enabled")
         self.settings_transcription_enabled.setChecked(bool(self.settings["transcription"].get("enabled", False)))
@@ -1506,6 +1744,7 @@ class MainWindow(QMainWindow):
             self.settings_ollama_url,
             self.settings_ollama_model,
             self.settings_ai_timeout,
+            self.settings_action_auto_close_days,
             self.settings_transcription_enabled,
             self.settings_whisper_url,
             self.settings_whisper_model,
@@ -1548,6 +1787,14 @@ class MainWindow(QMainWindow):
         settings_tabs.addTab(
             self._settings_section(
                 [
+                    ("Action auto-close", self._setting_with_hint(self.settings_action_auto_close_days, "Automatically marks aging open actions as closed after this many days from the meeting date. Set to 0 to disable.", visible=True)),
+                ]
+            ),
+            "Review",
+        )
+        settings_tabs.addTab(
+            self._settings_section(
+                [
                     ("WhisperLive", self._setting_with_hint(self.settings_transcription_enabled, "Turn this on to transcribe audio with your WhisperLive server during processing.")),
                     ("WhisperLive URL", self._setting_with_hint(self.settings_whisper_url, "Base URL for WhisperLive. Nova converts http/https to the matching WebSocket connection.")),
                     ("Whisper model", self._setting_with_hint(self.settings_whisper_model, "Common values are tiny, base, small, medium, and large-v3. Availability depends on your WhisperLive container/config.", visible=True)),
@@ -1563,8 +1810,11 @@ class MainWindow(QMainWindow):
         panel_layout.addWidget(settings_tabs, stretch=1)
 
         button_row = QHBoxLayout()
+        button_row.setSpacing(8)
         self.settings_refresh_devices_button = QPushButton("Refresh devices")
         self.settings_refresh_devices_button.clicked.connect(self.refresh_devices)
+        self.settings_preflight_button = QPushButton("Run preflight")
+        self.settings_preflight_button.clicked.connect(self.run_capture_preflight)
         self.settings_test_ollama_button = QPushButton("Test Ollama")
         self.settings_test_ollama_button.clicked.connect(self.test_ollama_connection)
         self.settings_test_whisper_button = QPushButton("Test WhisperLive")
@@ -1572,7 +1822,17 @@ class MainWindow(QMainWindow):
         self.settings_button = QPushButton("Save settings")
         self.settings_button.setObjectName("PrimaryButton")
         self.settings_button.clicked.connect(self.save_settings_page)
+        for button in (
+            self.settings_refresh_devices_button,
+            self.settings_preflight_button,
+            self.settings_test_ollama_button,
+            self.settings_test_whisper_button,
+            self.settings_button,
+        ):
+            button.setMinimumWidth(0)
+            button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         button_row.addWidget(self.settings_refresh_devices_button)
+        button_row.addWidget(self.settings_preflight_button)
         button_row.addWidget(self.settings_test_ollama_button)
         button_row.addWidget(self.settings_test_whisper_button)
         button_row.addStretch()
@@ -1662,8 +1922,9 @@ class MainWindow(QMainWindow):
         label.setObjectName("StatusBadge")
         label.setProperty("state", self._meeting_status_state(text))
         label.setAlignment(Qt.AlignCenter)
-        label.setMinimumWidth(0)
-        label.setMaximumWidth(138)
+        label.setMinimumWidth(130)
+        label.setMaximumWidth(156)
+        label.setMinimumHeight(24)
         return label
 
     def _asset_path(self, file_name: str) -> Path:
@@ -1720,7 +1981,8 @@ class MainWindow(QMainWindow):
     def _set_active_nav(self, index: int) -> None:
         self.pages.setCurrentIndex(index)
         for button_index, button in enumerate(self.nav_buttons):
-            is_active = button_index == index
+            stack_index = button_index if button_index < 2 else button_index + 1
+            is_active = stack_index == index
             button.setProperty("active", "true" if is_active else "false")
             button.setIcon(self._nav_icon(button_index, active=is_active))
             button.style().unpolish(button)
@@ -2417,6 +2679,8 @@ class MainWindow(QMainWindow):
         self._refresh_widget_style(self.recording_button)
         self.settings_button.setEnabled(False)
         self.capture_mic_toggle.setEnabled(False)
+        self.mark_important_button.setEnabled(True)
+        self.add_note_button.setEnabled(True)
         self.reprocess_button.setEnabled(False)
         if hasattr(self, "batch_reprocess_button"):
             self.batch_reprocess_button.setEnabled(False)
@@ -2520,6 +2784,8 @@ class MainWindow(QMainWindow):
             self.log(f"Recording duration: {hours:02}:{minutes:02}:{seconds:02}")
         self.recording_button.setEnabled(False)
         self.recording_button.setText("Processing...")
+        self.mark_important_button.setEnabled(False)
+        self.add_note_button.setEnabled(False)
         self.orb.set_state("processing")
         self.status_label.setText("Processing")
         self.orb_caption.setText("Processing time")
@@ -2563,7 +2829,7 @@ class MainWindow(QMainWindow):
         return min(device.channels, 2)
 
     def open_settings(self) -> None:
-        self._set_active_nav(6)
+        self._set_active_nav(7)
 
     def _populate_settings_device_controls(self) -> None:
         if not hasattr(self, "settings_mic_combo"):
@@ -2594,6 +2860,7 @@ class MainWindow(QMainWindow):
         self.settings["ai"]["ollama_url"] = self.settings_ollama_url.text().strip()
         self.settings["ai"]["ollama_model"] = self.settings_ollama_model.text().strip()
         self.settings["ai"]["timeout_seconds"] = self.settings_ai_timeout.value()
+        self.settings.setdefault("review", {})["action_auto_close_days"] = self.settings_action_auto_close_days.value()
         self.settings["transcription"]["enabled"] = self.settings_transcription_enabled.isChecked()
         self.settings["transcription"]["whisperlive_url"] = self.settings_whisper_url.text().strip()
         self.settings["transcription"]["model"] = self.settings_whisper_model.text().strip()
@@ -2647,6 +2914,63 @@ class MainWindow(QMainWindow):
         except Exception as error:
             QMessageBox.warning(self, "WhisperLive Test", f"WhisperLive test failed:\n{error}")
             self.log(f"WhisperLive test failed: {error}")
+
+    def run_capture_preflight(self) -> None:
+        checks: list[tuple[str, bool, str]] = []
+        self.refresh_devices()
+
+        mic_required = self.capture_mic_toggle.isChecked() if hasattr(self, "capture_mic_toggle") else bool(self.settings["audio"].get("capture_mic", True))
+        mic_device = self._resolve_microphone_device()
+        loop_device = self._resolve_loopback_device()
+        checks.append(("Microphone", bool(mic_device) or not mic_required, mic_device.label if mic_device else "Muted or unavailable"))
+        checks.append(("System audio", bool(loop_device), loop_device.label if loop_device else "No WASAPI loopback resolved"))
+
+        try:
+            self.meeting_store.meetings_root.mkdir(parents=True, exist_ok=True)
+            probe_path = self.meeting_store.meetings_root / ".nova_write_test"
+            probe_path.write_text("ok", encoding="utf-8")
+            probe_path.unlink(missing_ok=True)
+            checks.append(("Meeting storage", True, str(self.meeting_store.meetings_root)))
+        except Exception as error:
+            checks.append(("Meeting storage", False, str(error)))
+
+        ollama_url = self.settings_ollama_url.text().strip().rstrip("/") if hasattr(self, "settings_ollama_url") else self.settings["ai"].get("ollama_url", "")
+        ollama_model = self.settings_ollama_model.text().strip() if hasattr(self, "settings_ollama_model") else self.settings["ai"].get("ollama_model", "")
+        try:
+            response = requests.get(f"{ollama_url}/api/tags", timeout=5)
+            response.raise_for_status()
+            models = [item.get("name", "") for item in response.json().get("models", []) if isinstance(item, dict)]
+            model_ok = not ollama_model or ollama_model in models
+            detail = f"{ollama_model} found" if model_ok and ollama_model else "Reachable"
+            if ollama_model and not model_ok:
+                detail = f"{ollama_model} not found"
+            checks.append(("Ollama", model_ok, detail))
+        except Exception as error:
+            checks.append(("Ollama", False, str(error)))
+
+        whisper_enabled = self.settings_transcription_enabled.isChecked() if hasattr(self, "settings_transcription_enabled") else bool(self.settings["transcription"].get("enabled", False))
+        if whisper_enabled:
+            whisper_url = self.settings_whisper_url.text().strip().rstrip("/") if hasattr(self, "settings_whisper_url") else self.settings["transcription"].get("whisperlive_url", "")
+            try:
+                parsed = urlparse(whisper_url)
+                scheme = "wss" if parsed.scheme == "https" else "ws"
+                host = parsed.hostname or whisper_url.replace("http://", "").replace("https://", "")
+                port = parsed.port or (443 if scheme == "wss" else 80)
+                ws_url = f"{scheme}://{host}:{port}"
+                ws = websocket.create_connection(ws_url, timeout=5)
+                ws.close()
+                checks.append(("WhisperLive", True, ws_url))
+            except Exception as error:
+                checks.append(("WhisperLive", False, str(error)))
+        else:
+            checks.append(("WhisperLive", True, "Disabled"))
+
+        lines = [f"{'OK' if passed else 'Review'} - {name}: {detail}" for name, passed, detail in checks]
+        all_passed = all(passed for _, passed, _ in checks)
+        title = "Preflight Passed" if all_passed else "Preflight Needs Review"
+        QMessageBox.information(self, title, "\n".join(lines))
+        for line in lines:
+            self.log(f"Preflight: {line}")
 
     def update_settings_summary(self) -> None:
         mic_setting = self.settings["audio"].get("mic_device_name", "") or DEFAULT_MIC_DEVICE
@@ -2714,6 +3038,8 @@ class MainWindow(QMainWindow):
         self._refresh_widget_style(self.recording_button)
         self.settings_button.setEnabled(True)
         self.capture_mic_toggle.setEnabled(True)
+        self.mark_important_button.setEnabled(False)
+        self.add_note_button.setEnabled(False)
         self.elapsed_timer.stop()
         self.timer_phase = "idle"
         if hasattr(self, "reprocess_button"):
@@ -2760,11 +3086,12 @@ class MainWindow(QMainWindow):
                 title = metadata.title or folder.name
                 status = metadata.status
                 insights = load_or_build_insights(folder)
+                self._auto_close_stale_actions(folder, metadata, insights)
             except Exception:
                 metadata = None
                 date_text, time_text, title, status = "", "", folder.name, "unknown"
 
-            open_actions = sum(1 for item in insights.actions if item.status.lower() != "done")
+            open_actions = sum(1 for item in insights.actions if item.status.lower() not in CLOSED_ACTION_STATUSES)
             review_count = len(insights.quality_warnings) + len(insights.warnings)
             if not self._meeting_matches_filter(folder, metadata, status, open_actions, review_count):
                 continue
@@ -2794,20 +3121,32 @@ class MainWindow(QMainWindow):
             status_cell.setObjectName("Transparent")
             status_layout = QHBoxLayout(status_cell)
             status_layout.setContentsMargins(6, 4, 6, 4)
-            status_layout.addWidget(self._status_badge(status_label))
+            status_layout.addWidget(self._status_badge(status_label), alignment=Qt.AlignCenter)
             self.meeting_table.setCellWidget(row, 3, status_cell)
 
             open_button = QPushButton("Open")
-            open_button.setText("Open meeting")
+            open_button.setText("Open")
             open_button.setObjectName("TableActionButton")
-            open_button.setFixedSize(128, 28)
+            open_button.setFixedSize(64, 28)
             open_button.setToolTip("Open this meeting overview")
             open_button.clicked.connect(lambda checked=False, meeting_folder=folder: self.open_meeting_overview(meeting_folder))
+            workspace_button = QPushButton("Workspace")
+            workspace_button.setObjectName("TableActionButton")
+            workspace_button.setFixedSize(92, 28)
+            workspace_button.setToolTip("Open this meeting in the main workspace")
+            workspace_button.clicked.connect(lambda checked=False, meeting_folder=folder: self.open_meeting_workspace(meeting_folder))
             open_item = SortableTableItem("")
             open_item.setData(Qt.UserRole, str(folder))
             open_item.setData(Qt.UserRole + 1, "")
             self.meeting_table.setItem(row, 6, open_item)
-            self.meeting_table.setCellWidget(row, 6, open_button)
+            open_cell = QWidget()
+            open_cell.setObjectName("Transparent")
+            open_layout = QHBoxLayout(open_cell)
+            open_layout.setContentsMargins(4, 4, 4, 4)
+            open_layout.setSpacing(6)
+            open_layout.addWidget(open_button)
+            open_layout.addWidget(workspace_button)
+            self.meeting_table.setCellWidget(row, 6, open_cell)
             self.meeting_table.setRowHeight(row, 38)
 
             if current_folder and folder == current_folder:
@@ -2815,8 +3154,10 @@ class MainWindow(QMainWindow):
 
         self.meeting_table.setSortingEnabled(True)
         self.meeting_table.sortItems(0, Qt.DescendingOrder)
-        self.meeting_table.setColumnWidth(3, 150)
-        self.meeting_table.setColumnWidth(6, 150)
+        self.meeting_table.setColumnWidth(3, 172)
+        self.meeting_table.setColumnWidth(4, 92)
+        self.meeting_table.setColumnWidth(5, 92)
+        self.meeting_table.setColumnWidth(6, 178)
         if self.meeting_table.rowCount() and self._selected_meeting_folder() is None:
             self.meeting_table.selectRow(0)
         if hasattr(self, "meetings_empty_state"):
@@ -2825,6 +3166,10 @@ class MainWindow(QMainWindow):
             self.meetings_empty_state.setVisible(not has_rows)
         if hasattr(self, "open_latest_button"):
             self.open_latest_button.setEnabled(bool(self.meeting_store.list_meetings()))
+        try:
+            write_meeting_index(self.meeting_store)
+        except Exception as error:
+            self.log(f"Meeting index refresh failed: {error}")
         self.refresh_review_center()
 
     def _meeting_matches_filter(
@@ -2878,6 +3223,8 @@ class MainWindow(QMainWindow):
             self.meeting_preview.setPlainText(content)
 
     def refresh_review_center(self) -> None:
+        if hasattr(self, "action_dashboard_table"):
+            self._refresh_action_dashboard()
         if hasattr(self, "calendar_table"):
             self._populate_calendar_meeting_filter()
             self._refresh_calendar_candidates()
@@ -2908,15 +3255,18 @@ class MainWindow(QMainWindow):
         return self.meeting_store.list_meetings()
 
     def _refresh_action_dashboard(self) -> None:
+        if not hasattr(self, "action_dashboard_table"):
+            return
         self.action_dashboard_table.setRowCount(0)
         for folder in self.meeting_store.list_meetings():
             try:
                 metadata = self.meeting_store.read_metadata(folder)
                 insights = load_or_build_insights(folder)
+                self._auto_close_stale_actions(folder, metadata, insights)
             except Exception:
                 continue
             for action_index, action in enumerate(insights.actions):
-                if action.status.lower() == "done":
+                if not self._action_matches_filters(action):
                     continue
                 row = self.action_dashboard_table.rowCount()
                 self.action_dashboard_table.insertRow(row)
@@ -2926,17 +3276,80 @@ class MainWindow(QMainWindow):
                     action.text,
                     action.due_date or "Unknown",
                     action.confidence or "",
-                    action.status or "open",
                 ]
                 for column, value in enumerate(values):
                     item = QTableWidgetItem(value)
                     item.setData(Qt.UserRole, str(folder))
                     item.setData(Qt.UserRole + 1, action_index)
-                self.action_dashboard_table.setItem(row, column, item)
+                    self.action_dashboard_table.setItem(row, column, item)
+
+                status_combo = QComboBox()
+                status_combo.addItems(["open", "in progress", "done", "deferred", "closed"])
+                status_combo.setCurrentText(action.status or "open")
+                status_combo.setMinimumHeight(34)
+                status_combo.setMinimumWidth(0)
+                status_combo.setFixedWidth(120)
+                status_combo.currentTextChanged.connect(
+                    lambda status, action_index=action_index, meeting_folder=folder: self._update_action_status(
+                        meeting_folder,
+                        action_index,
+                        status,
+                    )
+                )
+                self.action_dashboard_table.setCellWidget(row, 5, status_combo)
+
+                open_button = QPushButton("Open")
+                open_button.setObjectName("TableActionButton")
+                open_button.setFixedSize(82, 28)
+                open_button.clicked.connect(lambda checked=False, meeting_folder=folder: self.open_meeting_workspace(meeting_folder))
+                open_item = QTableWidgetItem("")
+                open_item.setData(Qt.UserRole, str(folder))
+                open_item.setData(Qt.UserRole + 1, action_index)
+                self.action_dashboard_table.setItem(row, 6, open_item)
+                self.action_dashboard_table.setCellWidget(row, 6, open_button)
                 self.action_dashboard_table.setRowHeight(row, 38)
         has_rows = self.action_dashboard_table.rowCount() > 0
         self.action_dashboard_table.setVisible(has_rows)
         self.actions_empty_state.setVisible(not has_rows)
+
+    def _auto_close_stale_actions(self, folder: Path, metadata: MeetingMetadata, insights: MeetingInsights) -> None:
+        days = int(self.settings.get("review", {}).get("action_auto_close_days", 30) or 0)
+        if days <= 0 or not insights.actions:
+            return
+        try:
+            started_at = datetime.fromisoformat(metadata.started_at)
+        except ValueError:
+            return
+        age_days = (datetime.now() - started_at).days
+        if age_days < days:
+            return
+
+        changed = False
+        for action in insights.actions:
+            if (action.status or "open").lower() not in CLOSED_ACTION_STATUSES:
+                action.status = "closed"
+                changed = True
+        if changed:
+            write_insights_json(folder, insights)
+            self.log(f"Auto-closed stale action item(s) older than {days} day(s): {metadata.title or folder.name}")
+
+    def _action_matches_filters(self, action: InsightItem) -> bool:
+        status_filter = self.action_status_filter.currentText() if hasattr(self, "action_status_filter") else "Open work"
+        status = (action.status or "open").lower()
+        if status_filter == "Open work" and status in CLOSED_ACTION_STATUSES:
+            return False
+        if status_filter not in {"Open work", "All statuses"} and status != status_filter.lower():
+            return False
+
+        owner_filter = self.action_owner_filter.text().strip().lower() if hasattr(self, "action_owner_filter") else ""
+        owner = (action.owner or "Unknown").lower()
+        if owner_filter and owner_filter not in owner:
+            return False
+
+        confidence_filter = self.action_confidence_filter.currentText() if hasattr(self, "action_confidence_filter") else "All confidence"
+        if confidence_filter != "All confidence" and (action.confidence or "").lower() != confidence_filter.lower():
+            return False
+        return True
 
     def _refresh_calendar_candidates(self) -> None:
         self.calendar_table.blockSignals(True)
@@ -2945,26 +3358,57 @@ class MainWindow(QMainWindow):
             try:
                 metadata = self.meeting_store.read_metadata(folder)
                 insights = load_or_build_insights(folder)
+                review = read_calendar_review(folder)
             except Exception:
                 continue
             for date_item in insights.dates:
+                key = candidate_key(date_item)
+                override = review.get(key, {}) if isinstance(review.get(key, {}), dict) else {}
+                approved = bool(override.get("approved", False))
                 row = self.calendar_table.rowCount()
                 self.calendar_table.insertRow(row)
                 values = [
+                    "",
                     metadata.title or folder.name,
-                    date_item.due_date or date_item.text,
-                    date_item.context or date_item.text,
+                    str(override.get("date_text") or date_item.due_date or date_item.text),
+                    str(override.get("context") or date_item.context or date_item.text),
                     date_item.confidence or "",
                 ]
                 for column, value in enumerate(values):
                     item = QTableWidgetItem(value)
                     item.setData(Qt.UserRole, str(folder))
+                    item.setData(Qt.UserRole + 1, key)
+                    if column == 0:
+                        item.setFlags((item.flags() | Qt.ItemIsUserCheckable) & ~Qt.ItemIsEditable)
+                        item.setCheckState(Qt.Checked if approved else Qt.Unchecked)
+                    elif column not in (2, 3):
+                        item.setFlags(item.flags() & ~Qt.ItemIsEditable)
                     self.calendar_table.setItem(row, column, item)
                 self.calendar_table.setRowHeight(row, 36)
         self.calendar_table.blockSignals(False)
         has_rows = self.calendar_table.rowCount() > 0
         self.calendar_table.setVisible(has_rows)
         self.calendar_empty_state.setVisible(not has_rows)
+
+    def _calendar_item_changed(self, item: QTableWidgetItem) -> None:
+        if item.column() not in (0, 2, 3):
+            return
+        folder_raw = item.data(Qt.UserRole)
+        key = item.data(Qt.UserRole + 1)
+        if not folder_raw or not key:
+            return
+        folder = Path(str(folder_raw))
+        review = read_calendar_review(folder)
+        entry = review.get(str(key), {}) if isinstance(review.get(str(key), {}), dict) else {}
+        row = item.row()
+        approved_item = self.calendar_table.item(row, 0)
+        date_item = self.calendar_table.item(row, 2)
+        context_item = self.calendar_table.item(row, 3)
+        entry["approved"] = approved_item.checkState() == Qt.Checked if approved_item else False
+        entry["date_text"] = date_item.text().strip() if date_item else ""
+        entry["context"] = context_item.text().strip() if context_item else ""
+        review[str(key)] = entry
+        write_calendar_review(folder, review)
 
     def _calendar_row_selected(self) -> None:
         if not hasattr(self, "calendar_widget"):
@@ -2973,8 +3417,8 @@ class MainWindow(QMainWindow):
         if not selected:
             return
         row = selected[0].row()
-        date_item = self.calendar_table.item(row, 1)
-        meeting_item = self.calendar_table.item(row, 0)
+        date_item = self.calendar_table.item(row, 2)
+        meeting_item = self.calendar_table.item(row, 1)
         if not date_item or not meeting_item:
             return
         folder = Path(str(meeting_item.data(Qt.UserRole) or ""))
@@ -3048,7 +3492,7 @@ class MainWindow(QMainWindow):
             self.search_results_table.setItem(row, column, item)
         button = QPushButton("Open meeting")
         button.setObjectName("TableActionButton")
-        button.clicked.connect(lambda checked=False, meeting_folder=folder: self.open_meeting_overview(meeting_folder))
+        button.clicked.connect(lambda checked=False, meeting_folder=folder: self.open_meeting_workspace(meeting_folder))
         open_item = QTableWidgetItem("")
         open_item.setData(Qt.UserRole, str(folder))
         self.search_results_table.setItem(row, 3, open_item)
@@ -3097,8 +3541,11 @@ class MainWindow(QMainWindow):
         open_folder_button.clicked.connect(lambda: os.startfile(folder))
         export_button = QPushButton("Export HTML")
         export_button.clicked.connect(lambda: self._export_notes_html_for_folder(folder))
+        rename_speakers_button = QPushButton("Rename speakers")
+        rename_speakers_button.clicked.connect(lambda: self.rename_speakers_for_meeting(folder))
         header.addWidget(open_folder_button)
         header.addWidget(export_button)
+        header.addWidget(rename_speakers_button)
         layout.addLayout(header)
 
         content = QGridLayout()
@@ -3131,6 +3578,16 @@ class MainWindow(QMainWindow):
         else:
             notes_view.setPlainText("notes.md has not been created yet.")
         notes_layout.addWidget(notes_view, stretch=1)
+        transcript_path = folder / "transcript.md"
+        transcript_view = QTextEdit()
+        transcript_view.setReadOnly(True)
+        if transcript_path.exists():
+            transcript_view.setMarkdown(self._transcript_for_display(transcript_path, folder))
+        else:
+            transcript_view.setPlainText("transcript.md has not been created yet.")
+        transcript_view.setMaximumHeight(220)
+        notes_layout.addWidget(self._section_label("Transcript"))
+        notes_layout.addWidget(transcript_view)
 
         details_scroll = QScrollArea()
         details_scroll.setWidgetResizable(True)
@@ -3147,6 +3604,7 @@ class MainWindow(QMainWindow):
 
         insights = load_or_build_insights(folder)
         details_layout.addWidget(self._overview_quality_card(metadata, insights))
+        details_layout.addWidget(self._overview_markers_card(folder))
         details_layout.addWidget(self._overview_action_items_card(folder, insights))
         for title_text, items in (
             ("Key decisions", insights.decisions),
@@ -3182,12 +3640,113 @@ class MainWindow(QMainWindow):
         self._fit_dialog_to_available_screen(dialog, preferred_width=1180, preferred_height=760)
         dialog.show()
 
+    def open_meeting_workspace(self, folder: Path | None = None) -> None:
+        folder = folder or self._selected_meeting_folder()
+        if folder is None:
+            QMessageBox.information(self, "Nova Notetaker", "Select a meeting to open.")
+            return
+        try:
+            metadata = self.meeting_store.read_metadata(folder)
+        except Exception as error:
+            QMessageBox.warning(self, "Nova Notetaker", f"Could not read meeting metadata: {error}")
+            return
+        self.overview_workspace_folder = folder
+        while self.overview_workspace_layout.count() > 0:
+            item = self.overview_workspace_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self.overview_workspace_layout.addWidget(self._build_overview_workspace_header(folder, metadata))
+        self.overview_workspace_layout.addWidget(self._build_meeting_overview_widget(folder, metadata), stretch=1)
+        self._set_active_nav(2)
+
+    def _build_overview_workspace_header(self, folder: Path, metadata: MeetingMetadata) -> QWidget:
+        header_widget = QWidget()
+        header_widget.setObjectName("Transparent")
+        header = QHBoxLayout(header_widget)
+        header.setContentsMargins(0, 0, 0, 0)
+        title_block = QVBoxLayout()
+        title = QLabel("Meeting Overview")
+        title.setObjectName("Title")
+        subtitle = self._muted_label(f"{metadata.title or folder.name}  |  {metadata.started_at}")
+        title_block.addWidget(title)
+        title_block.addWidget(subtitle)
+        header.addLayout(title_block)
+        header.addStretch()
+        popout_button = QPushButton("Pop out")
+        popout_button.clicked.connect(lambda: self.open_meeting_overview(folder))
+        rename_button = QPushButton("Rename speakers")
+        rename_button.clicked.connect(lambda: self.rename_speakers_for_meeting(folder))
+        header.addWidget(rename_button)
+        header.addWidget(popout_button)
+        return header_widget
+
+    def _build_meeting_overview_widget(self, folder: Path, metadata: MeetingMetadata) -> QWidget:
+        widget = QWidget()
+        widget.setObjectName("Transparent")
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        # Reuse the popout construction by embedding a compact summary when the workspace loads.
+        notes_path = folder / "notes.md"
+        notes_view = QTextEdit()
+        notes_view.setReadOnly(True)
+        notes_view.setMarkdown(self._notes_for_display(notes_path) if notes_path.exists() else "notes.md has not been created yet.")
+        transcript_view = QTextEdit()
+        transcript_view.setReadOnly(True)
+        transcript_path = folder / "transcript.md"
+        transcript_view.setMarkdown(self._transcript_for_display(transcript_path, folder) if transcript_path.exists() else "transcript.md has not been created yet.")
+        tabs = QTabWidget()
+        tabs.addTab(notes_view, "Structured notes")
+        tabs.addTab(transcript_view, "Transcript")
+        details = QTextEdit()
+        details.setReadOnly(True)
+        insights = load_or_build_insights(folder)
+        details.setPlainText(
+            "\n".join(
+                [
+                    self._format_health_summary(metadata),
+                    "",
+                    f"Open actions: {sum(1 for item in insights.actions if item.status.lower() not in CLOSED_ACTION_STATUSES)}",
+                    f"Decisions: {len(insights.decisions)}",
+                    f"Dates: {len(insights.dates)}",
+                    f"Review warnings: {len(insights.quality_warnings)}",
+                ]
+            )
+        )
+        tabs.addTab(details, "Details")
+        layout.addWidget(tabs, stretch=1)
+        return widget
+
     def open_latest_meeting(self) -> None:
         meetings = self.meeting_store.list_meetings()
         if not meetings:
             QMessageBox.information(self, "Nova Notetaker", "No meetings have been captured yet.")
             return
         self.open_meeting_overview(meetings[0])
+
+    def mark_current_meeting_important(self) -> None:
+        self._append_current_marker("important", "Marked important")
+
+    def add_current_meeting_note(self) -> None:
+        text, accepted = QInputDialog.getText(self, "Add Meeting Note", "Note")
+        if not accepted or not text.strip():
+            return
+        self._append_current_marker("note", text.strip())
+
+    def _append_current_marker(self, marker_type: str, text: str) -> None:
+        if not self.meeting_folder or not self.recording_started_at:
+            QMessageBox.information(self, "Nova Notetaker", "Start a recording before adding meeting markers.")
+            return
+        seconds = max(0, int((datetime.now() - self.recording_started_at).total_seconds()))
+        marker = {
+            "type": marker_type,
+            "text": text,
+            "created_at": datetime.now().isoformat(timespec="seconds"),
+            "offset_seconds": seconds,
+            "offset_label": self._format_duration(seconds),
+        }
+        self.meeting_store.append_marker(self.meeting_folder, marker)
+        self.log(f"Added meeting marker at {marker['offset_label']}: {text}")
 
     def _overview_quality_card(self, metadata: MeetingMetadata, insights: MeetingInsights) -> QFrame:
         card = QFrame()
@@ -3210,13 +3769,41 @@ class MainWindow(QMainWindow):
         summary = [
             f"Recording: {self._format_duration(duration)}" if duration else "Recording: unknown",
             f"Transcript: {'available' if transcript_ok else 'missing'}",
-            f"Open actions: {sum(1 for item in insights.actions if item.status.lower() != 'done')}",
+            f"Open actions: {sum(1 for item in insights.actions if item.status.lower() not in CLOSED_ACTION_STATUSES)}",
             f"Review warnings: {len(insights.quality_warnings) + len(warnings)}",
         ]
         for line in summary:
             label = QLabel(line)
             label.setWordWrap(True)
             layout.addWidget(label)
+        return card
+
+    def _overview_markers_card(self, folder: Path) -> QFrame:
+        card = QFrame()
+        card.setObjectName("RaisedPanel")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(8)
+        markers = self.meeting_store.read_markers(folder)
+        header = QHBoxLayout()
+        label = QLabel("Meeting markers")
+        label.setObjectName("SectionTitle")
+        count = QLabel(str(len(markers)))
+        count.setObjectName("OrangeText")
+        header.addWidget(label)
+        header.addStretch()
+        header.addWidget(count)
+        layout.addLayout(header)
+        if not markers:
+            layout.addWidget(self._muted_label("- None added"))
+            return card
+        for marker in markers[:6]:
+            marker_label = marker.get("offset_label") or self._format_duration(float(marker.get("offset_seconds") or 0))
+            text = str(marker.get("text") or "").strip()
+            kind = str(marker.get("type") or "marker").title()
+            row = QLabel(f"{marker_label} - {kind}: {text}")
+            row.setWordWrap(True)
+            layout.addWidget(row)
         return card
 
     def _overview_action_items_card(self, folder: Path, insights: MeetingInsights) -> QFrame:
@@ -3242,8 +3829,10 @@ class MainWindow(QMainWindow):
         for index, item in enumerate(insights.actions[:8]):
             row = self._insight_item_widget(item)
             status_combo = QComboBox()
-            status_combo.addItems(["open", "in progress", "done", "deferred"])
+            status_combo.addItems(["open", "in progress", "done", "deferred", "closed"])
             status_combo.setCurrentText(item.status or "open")
+            status_combo.setMinimumHeight(32)
+            status_combo.setMinimumWidth(132)
             status_combo.setToolTip("Update action item status")
             status_combo.currentTextChanged.connect(
                 lambda status, action_index=index, meeting_folder=folder: self._update_action_status(meeting_folder, action_index, status)
@@ -3270,6 +3859,41 @@ class MainWindow(QMainWindow):
         text = re.sub(r"\bSource:\s*<span[^>]*>[^<]+</span>;?\s*", "", text)
         text = re.sub(r"\bSource:\s*[^;\n]+;?\s*", "", text)
         return text
+
+    @staticmethod
+    def _transcript_for_display(transcript_path: Path, folder: Path) -> str:
+        text = transcript_path.read_text(encoding="utf-8", errors="ignore")
+        return apply_speaker_aliases_to_markdown(text, read_speaker_aliases(folder))
+
+    def rename_speakers_for_meeting(self, folder: Path) -> None:
+        transcript_path = folder / "transcript.md"
+        if not transcript_path.exists():
+            QMessageBox.information(self, "Nova Notetaker", "This meeting does not have a transcript yet.")
+            return
+        transcript_text = transcript_path.read_text(encoding="utf-8", errors="ignore")
+        speakers = transcript_speakers(transcript_text)
+        if not speakers:
+            QMessageBox.information(self, "Nova Notetaker", "No transcript speaker headings were found.")
+            return
+        aliases = read_speaker_aliases(folder)
+        changed = False
+        for speaker in speakers:
+            current = aliases.get(speaker, speaker)
+            value, accepted = QInputDialog.getText(self, "Rename Speaker", f"{speaker}", text=current)
+            if not accepted:
+                continue
+            value = value.strip()
+            if value and value != speaker:
+                aliases[speaker] = value
+                changed = True
+            elif speaker in aliases:
+                aliases.pop(speaker)
+                changed = True
+        if changed:
+            write_speaker_aliases(folder, aliases)
+            self.log(f"Updated speaker names for {folder.name}")
+            if self.overview_workspace_folder == folder:
+                self.open_meeting_workspace(folder)
 
     @classmethod
     def _note_section_lines(cls, notes_path: Path, section_name: str) -> list[str]:
@@ -3524,24 +4148,35 @@ class MainWindow(QMainWindow):
 
     def export_all_calendar_ics(self) -> None:
         folders = self._calendar_filter_folders()
-        selected_label = "all" if len(folders) != 1 else self._safe_file_label(folders[0].name)
+        selected_label = "all" if len(folders) != 1 else safe_file_label(folders[0].name)
         path = self._export_calendar_ics_for_folders(folders, self.meeting_store.meetings_root / f"nova_calendar_candidates_{selected_label}.ics")
         if path:
             QMessageBox.information(self, "Nova Notetaker", f"Calendar candidates exported:\n{path}")
             self.log(f"Exported calendar candidates: {path}")
 
     def _export_calendar_ics_for_folders(self, folders: list[Path], output_path: Path) -> Path | None:
-        items: list[tuple[MeetingMetadata, InsightItem]] = []
+        items: list[tuple[MeetingMetadata, InsightItem, str, str]] = []
         for folder in folders:
             try:
                 metadata = self.meeting_store.read_metadata(folder)
                 insights = load_or_build_insights(folder)
+                review = read_calendar_review(folder)
                 for date_item in insights.dates:
-                    items.append((metadata, date_item))
+                    override = review.get(candidate_key(date_item), {}) if isinstance(review.get(candidate_key(date_item), {}), dict) else {}
+                    if not override.get("approved", False):
+                        continue
+                    items.append(
+                        (
+                            metadata,
+                            date_item,
+                            str(override.get("date_text") or date_item.due_date or date_item.text),
+                            str(override.get("context") or date_item.context or date_item.text),
+                        )
+                    )
             except Exception as error:
                 self.log(f"Skipping calendar export for {folder.name}: {error}")
         if not items:
-            QMessageBox.information(self, "Nova Notetaker", "No calendar candidates found.")
+            QMessageBox.information(self, "Nova Notetaker", "No approved calendar candidates found.")
             return None
 
         now_stamp = datetime.now().strftime("%Y%m%dT%H%M%S")
@@ -3551,16 +4186,16 @@ class MainWindow(QMainWindow):
             "PRODID:-//Nova Notetaker//Meeting Intelligence//EN",
             "CALSCALE:GREGORIAN",
         ]
-        for index, (metadata, date_item) in enumerate(items, start=1):
-            title = f"{metadata.title or 'Nova meeting'} - {date_item.context or date_item.text}"
-            description = f"Meeting: {metadata.title or 'Untitled'}\\nDetected date: {date_item.due_date or date_item.text}\\nConfidence: {date_item.confidence or 'Unknown'}"
+        for index, (metadata, date_item, date_text, context) in enumerate(items, start=1):
+            title = f"{metadata.title or 'Nova meeting'} - {context}"
+            description = f"Meeting: {metadata.title or 'Untitled'}\\nApproved date: {date_text}\\nConfidence: {date_item.confidence or 'Unknown'}"
             lines.extend(
                 [
                     "BEGIN:VTODO",
                     f"UID:nova-{now_stamp}-{index}@nova-notetaker",
                     f"DTSTAMP:{now_stamp}",
-                    f"SUMMARY:{self._ics_escape(title)}",
-                    f"DESCRIPTION:{self._ics_escape(description)}",
+                    f"SUMMARY:{ics_escape(title)}",
+                    f"DESCRIPTION:{ics_escape(description)}",
                     "STATUS:NEEDS-ACTION",
                     "END:VTODO",
                 ]
@@ -3568,14 +4203,6 @@ class MainWindow(QMainWindow):
         lines.append("END:VCALENDAR")
         output_path.write_text("\r\n".join(lines) + "\r\n", encoding="utf-8")
         return output_path
-
-    @staticmethod
-    def _ics_escape(text: str) -> str:
-        return text.replace("\\", "\\\\").replace("\n", "\\n").replace(",", "\\,").replace(";", "\\;")
-
-    @staticmethod
-    def _safe_file_label(text: str) -> str:
-        return re.sub(r"[^a-zA-Z0-9_-]+", "-", text).strip("-").lower() or "meeting"
 
     @staticmethod
     def _format_duration(seconds: float) -> str:

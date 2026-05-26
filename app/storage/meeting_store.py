@@ -45,6 +45,28 @@ class MeetingStore:
         with path.open("w", encoding="utf-8") as handle:
             json.dump(asdict(metadata), handle, indent=2)
 
+    def append_marker(self, folder: Path, marker: dict[str, Any]) -> Path:
+        markers = self.read_markers(folder)
+        markers.append(marker)
+        return self.write_markers(folder, markers)
+
+    def read_markers(self, folder: Path) -> list[dict[str, Any]]:
+        path = folder / "markers.json"
+        if not path.exists():
+            return []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+        if not isinstance(data, list):
+            return []
+        return [item for item in data if isinstance(item, dict)]
+
+    def write_markers(self, folder: Path, markers: list[dict[str, Any]]) -> Path:
+        path = folder / "markers.json"
+        path.write_text(json.dumps(markers, indent=2), encoding="utf-8")
+        return path
+
     def list_meetings(self) -> list[Path]:
         if not self.meetings_root.exists():
             return []

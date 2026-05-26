@@ -472,7 +472,7 @@ QTableWidget {{
 }}
 
 QTableWidget::item {{
-    padding: 7px;
+    padding: 6px;
 }}
 
 QTableWidget::item:selected {{
@@ -485,7 +485,7 @@ QHeaderView::section {{
     color: {t["secondary"]};
     border: 0;
     border-bottom: 1px solid {t["border"]};
-    padding: 8px;
+    padding: 7px;
     font-weight: 600;
 }}
 

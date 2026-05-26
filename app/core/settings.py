@@ -43,6 +43,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "storage": {
         "meetings_dir": "meetings",
     },
+    "review": {
+        "action_auto_close_days": 30,
+    },
 }
 
 
