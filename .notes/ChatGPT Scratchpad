@@ -45,7 +45,8 @@ Current overall assessment:
 - Branding direction is correct.
 - Information architecture is solid.
 - UI hierarchy is improving.
-- Product still visually feels closer to a polished prototype than a finished enterprise application.
+- Product already feels substantially more polished than a prototype.
+- Dark mode is approaching believable enterprise software quality.
 
 Current priority should shift away from major feature expansion and toward:
 
@@ -55,6 +56,7 @@ Current priority should shift away from major feature expansion and toward:
 - Consistency.
 - Perceived quality.
 - UX confidence.
+- Cognitive load reduction.
 
 The product is entering the transition from:
 
@@ -94,6 +96,48 @@ Target visual inspiration should remain closer to:
 - Slack admin tooling.
 - Modern productivity software.
 
+## Theme Review
+
+Current implemented themes:
+
+- Executive Dark.
+- Clean Professional.
+- Modern Gradient / Colorful.
+
+Current assessment after screenshot review:
+
+Executive Dark:
+
+- Strongest overall direction.
+- Most professional.
+- Most enterprise-ready.
+- Best balance of contrast and focus.
+- Current flagship recommendation.
+
+Clean Professional / Light:
+
+- Structurally good.
+- Feels somewhat flat and clinical.
+- Useful as an accessibility and daytime option.
+- Needs more depth and hierarchy refinement.
+
+Colorful / Gradient:
+
+- More visually interesting.
+- Currently feels less enterprise-oriented.
+- Risks leaning toward consumer/gaming aesthetics.
+- Should remain restrained if retained.
+
+Current recommendation:
+
+- Executive Dark should remain the primary/default experience.
+- Light theme should remain available but secondary.
+- Consider toning down or redesigning the Colorful theme.
+
+The newer Dark screenshots are a major improvement over earlier purple-heavy styling.
+
+The darker matte surfaces with restrained orange accents are significantly more professional.
+
 ## Information Architecture Review
 
 The current sidebar structure is strong:
@@ -110,6 +154,15 @@ This creates clean separation between:
 - Historical review.
 - Configuration.
 - System visibility.
+
+The sidebar itself is already quite successful visually.
+
+Current recommendations:
+
+- Slightly tighten vertical spacing.
+- Slightly reduce sidebar contrast.
+- Make the orb/status panel slightly more compact.
+- Preserve the overall structure and branding.
 
 The Meetings page and Meeting Overview concepts are especially promising long-term.
 
@@ -204,6 +257,141 @@ Areas needing continued polish:
 - Window layout behavior.
 - Theme consistency.
 
+## Live Capture UX Review
+
+Current assessment:
+
+- Functionality appears strong.
+- Visual hierarchy needs improvement.
+- Too many UI areas currently compete equally for attention.
+
+Current UI contains simultaneously:
+
+- Meeting configuration.
+- Status.
+- Timer.
+- Audio levels.
+- Transcript.
+- Insights.
+- Theme controls.
+- Recording controls.
+
+This creates excessive attention competition.
+
+Current recommendation:
+
+Refactor the page into clearer zones:
+
+Top section:
+
+- Meeting title.
+- Recording state.
+- Elapsed time.
+
+Middle section:
+
+- Transcript.
+- Speaker activity.
+- Realtime context.
+
+Right rail:
+
+- AI insights.
+- Action items.
+- Decisions.
+- Dates.
+- Risks.
+
+Bottom sticky control area:
+
+- Record.
+- Pause.
+- Add note.
+- Bookmark.
+
+The page should feel workflow-oriented rather than panel-oriented.
+
+The user should always intuitively know:
+
+- Current meeting state.
+- What matters now.
+- What the AI has already identified.
+
+## Meetings Page Review
+
+The Meetings page is currently one of the strongest screens.
+
+Current strengths:
+
+- Clean structure.
+- Clear table layout.
+- Good spacing.
+- Easy scanability.
+
+Current weakness:
+
+- Status values feel too technical.
+
+Avoid backend-like status strings such as:
+
+- processed_with_warnings
+- needs review
+
+Recommended UX direction:
+
+- Human-readable operational badges.
+
+Examples:
+
+- Complete
+- Needs Review
+- Processing
+- Draft
+- Low Confidence
+- Missing Owner
+- Missing Due Date
+
+The Meetings page should eventually feel more like:
+
+- Executive operational dashboard.
+
+Rather than:
+
+- Technical processing table.
+
+## Templates and Settings UX Review
+
+Current structure is good.
+
+Current issue:
+
+- Configuration fatigue.
+- Visual density.
+- Repetitive form rhythm.
+
+The current pattern:
+
+- Label.
+- Field.
+- Description.
+
+Repeated continuously creates cognitive exhaustion.
+
+Current recommendations:
+
+- Introduce stronger section grouping.
+- Use subsection cards.
+- Increase whitespace between conceptual groups.
+- Reduce visible helper text.
+- Collapse advanced sections.
+- Use lighter helper text styling.
+- Use inline helper icons/tooltips.
+
+The Templates page specifically would benefit from:
+
+- Stronger separation between metadata and editor content.
+- More visual emphasis on the editable intelligence areas.
+
 ## Meeting Overview Direction
 
 The Meeting Overview experience may become the true core product surface.
@@ -248,6 +436,14 @@ Potential improvements:
 - Jump-to-transcript links.
 - Stronger insight cards.
 - Larger visual emphasis on actions and decisions.
+
+The Meeting Overview page should eventually feel like:
+
+- AI-generated executive briefing.
+
+Not:
+
+- A transcript viewer.
 
 ## Realtime Transcription Direction
 
@@ -310,6 +506,58 @@ The app should instead feel like:
 - Quiet live meeting awareness.
 - Ambient meeting intelligence.
 - Calm rolling context.
+
+## Speaker Identification Direction
+
+Current recommendation:
+
+- Preserve Nova’s passive-first architecture.
+- Avoid requiring active Teams bot integration initially.
+
+Current realistic recommendation:
+
+- Speaker diarization rather than full Teams identity awareness.
+
+Recommended near-term UX:
+
+- Speaker 1.
+- Speaker 2.
+- Speaker 3.
+- You.
+- Meeting Audio.
+
+Potential future enhancement:
+
+- Allow post-meeting speaker renaming.
+
+Example:
+
+- Speaker 1 -> Maya
+- Speaker 2 -> Alex
+
+This preserves:
+
+- Privacy-first positioning.
+- Passive architecture.
+- Simpler infrastructure.
+- Local-first workflow.
+
+Longer-term possibility:
+
+- Optional Teams integration mode.
+- Optional Microsoft Graph support.
+- Optional active speaker metadata.
+
+However:
+
+- This would significantly change the product architecture.
+- This would likely require tenant/admin approval.
+- This would move Nova closer toward a meeting bot model.
+
+Current recommendation:
+
+- Prioritize passive diarization first.
+- Avoid active Teams integration unless strategically necessary later.
 
 ## Future Database Considerations
 
@@ -430,46 +678,18 @@ Reference feeling:
 - Calm enterprise AI.
 - Ambient premium software.
 
-## Theme Guidance
-
-Current implemented themes:
-
-- Executive Dark.
-- Clean Professional.
-- Modern Gradient.
-
-Current recommendation:
-
-- Executive Dark should remain the flagship experience.
-- Light theme should prioritize all-day usability.
-- Gradient theme should remain business-safe and restrained.
-
-Current recommendation:
-
-- Focus on polishing Executive Dark first.
-- Perfect one flagship experience before heavily refining secondary themes.
-
-Design watch areas:
-
-- Markdown readability.
-- Badge contrast.
-- Disabled control visibility.
-- Table readability.
-- High DPI scaling.
-- Laptop readability.
-
 ## Priority Design Improvements
 
 Highest current design priorities:
 
-- Improve typography hierarchy.
-- Reduce visual noise.
-- Improve whitespace balance.
-- Make insights feel like the primary value.
-- Simplify status communication.
-- Improve screenshot-readiness.
-- Refine Meeting Overview polish.
-- Refine Light and Gradient themes.
+1. Live Capture layout redesign.
+2. Meeting status/badge system.
+3. Typography hierarchy cleanup.
+4. Form density reduction.
+5. Insight card redesign.
+6. Unified spacing system.
+7. Responsive scaling polish.
+8. Optional compact mode.
 
 Additional recommended priorities:
 
@@ -573,6 +793,8 @@ When implementing UI changes, prioritize:
 - Minimal visual clutter.
 - Calm enterprise presentation.
 - Screenshot-tested layouts.
+- Reduced cognitive load.
+- Workflow-oriented hierarchy.
 
 When implementing workflow changes, prioritize:
 
