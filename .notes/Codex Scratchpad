@@ -71,6 +71,17 @@ Current infrastructure assumptions:
   - Templates are for output style and structure; profiles are for meeting/company context.
   - Reprocess now lets the user override the note template before regenerating notes or doing a full reprocess.
 
+- Ollama notes generation now has a format guardrail.
+  - Nova validates that generated notes include the required sections:
+    - Summary
+    - Key Decisions
+    - Action Items
+    - Important Dates
+    - Risks / Blockers
+    - Follow-ups
+  - If Ollama returns prose or misses required sections, Nova retries once with a stricter rewrite prompt.
+  - If the retry still misses the format, Nova keeps the notes but records a processing warning.
+
 - Reprocess transcript handling was fixed.
   - System-audio-only meetings often have `## You` marked as `_Transcript pending._`.
   - Notes-only reprocess now ignores pending sections and processing warnings, then uses any real transcript text that remains.
@@ -270,8 +281,8 @@ Potential future insight improvements:
 ## Last Verified State
 
 - Last code verification: 2026-05-26.
-- Full test suite passed after the meeting-intelligence pass:
-  - 22 tests OK.
+- Full test suite passed after the Ollama format-retry guardrail:
+  - 25 tests OK.
 - Most recent bug fixed:
   - Notes-only reprocess accepts transcripts where one source is pending but another source contains real text.
   - Stale `insights.json` is rebuilt when notes are newer.

@@ -32,32 +32,24 @@ class OllamaClient:
 
         prompt = self._build_prompt(transcript, profile_context=profile_context)
         try:
-            response = requests.post(
-                f"{self.url}/api/generate",
-                json={
-                    "model": self.model,
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": {
-                        "temperature": 0.2,
-                    },
-                },
-                timeout=self.timeout_seconds,
-            )
-            if not response.ok:
-                return NotesResult(
-                    text="",
-                    success=False,
-                    warning=f"Ollama summarization failed: {response.status_code} {response.text[:500]}",
-                )
-            payload = response.json()
-            text = self._clean_notes(str(payload.get("response", "")).strip())
+            text, warning = self._generate_notes_text(prompt)
             if not text:
                 return NotesResult(
                     text="",
                     success=False,
                     warning="Ollama returned an empty meeting note.",
                 )
+            if not self._has_required_sections(text):
+                retry_prompt = self._build_format_retry_prompt(text)
+                retry_text, retry_warning = self._generate_notes_text(retry_prompt)
+                if retry_text and self._has_required_sections(retry_text):
+                    return NotesResult(text=retry_text, success=True)
+                warning_parts = [
+                    "Ollama returned notes without the required Nova sections.",
+                    warning or "",
+                    retry_warning or "",
+                ]
+                warning = " ".join(part for part in warning_parts if part).strip()
             return NotesResult(text=text, success=True)
         except Exception as error:
             return NotesResult(
@@ -65,6 +57,24 @@ class OllamaClient:
                 success=False,
                 warning=f"Ollama summarization failed: {error}",
             )
+
+    def _generate_notes_text(self, prompt: str) -> tuple[str, str | None]:
+        response = requests.post(
+            f"{self.url}/api/generate",
+            json={
+                "model": self.model,
+                "prompt": prompt,
+                "stream": False,
+                "options": {
+                    "temperature": 0.2,
+                },
+            },
+            timeout=self.timeout_seconds,
+        )
+        if not response.ok:
+            return "", f"Ollama summarization failed: {response.status_code} {response.text[:500]}"
+        payload = response.json()
+        return self._clean_notes(str(payload.get("response", "")).strip()), None
 
     @staticmethod
     def _build_prompt(transcript: str, profile_context: str = "") -> str:
@@ -107,6 +117,39 @@ class OllamaClient:
             f"{profile_block}\n"
             f"Transcript:\n{transcript}"
         )
+
+    @staticmethod
+    def _build_format_retry_prompt(notes: str) -> str:
+        return (
+            "Your previous Nova Notetaker response did not follow the required Markdown format.\n"
+            "Rewrite the notes below using exactly these top-level sections, in this order:\n"
+            "## Summary\n"
+            "## Key Decisions\n"
+            "## Action Items\n"
+            "## Important Dates\n"
+            "## Risks / Blockers\n"
+            "## Follow-ups\n\n"
+            "Return only Markdown notes. Do not add a title or explanation.\n"
+            "If a section has no evidence, write '- None captured.'\n\n"
+            "Action item format:\n"
+            "- Owner: <person or Unknown>; Task: <specific task>; Due: <date or Unknown>; Confidence: <High, Medium, or Low>\n\n"
+            "Important date format:\n"
+            "- Date: <date>; Context: <what it refers to>; Confidence: <High, Medium, or Low>\n\n"
+            f"Notes to rewrite:\n{notes}"
+        )
+
+    @staticmethod
+    def _has_required_sections(text: str) -> bool:
+        lowered = text.lower()
+        required = [
+            "## summary",
+            "## key decisions",
+            "## action items",
+            "## important dates",
+            "## risks / blockers",
+            "## follow-ups",
+        ]
+        return all(section in lowered for section in required)
 
     @staticmethod
     def _clean_notes(text: str) -> str:

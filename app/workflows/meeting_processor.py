@@ -118,6 +118,9 @@ class MeetingProcessor:
                 profile_context=self._profile_prompt_context(metadata),
             )
             if notes_result.success:
+                if notes_result.warning:
+                    warnings.append(notes_result.warning)
+                    on_status(notes_result.warning)
                 notes_path = self.meeting_store.write_notes(folder, metadata, notes_result.text, transcript_path, warnings)
             else:
                 if notes_result.warning:
