@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import math
 
-from PySide6.QtCore import QPointF, QTimer, Qt
-from PySide6.QtGui import QColor, QPainter, QPen, QRadialGradient
+from PySide6.QtCore import QPointF, QRectF, QTimer, Qt
+from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap, QRadialGradient
 from PySide6.QtWidgets import QWidget
+
+from app.core.settings import APP_ROOT
 
 
 class OrbWidget(QWidget):
@@ -15,10 +17,36 @@ class OrbWidget(QWidget):
         self.energy = 0.25
         self.target_energy = 0.25
         self.state = "idle"
+        self.orb_pixmap = self._load_orb_pixmap()
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.animate)
         self.timer.start(16)
+
+    @staticmethod
+    def _load_orb_pixmap() -> QPixmap:
+        image = QImage(str(APP_ROOT / "assets" / "Orb.png"))
+        if image.isNull():
+            return QPixmap()
+        rect = image.rect()
+        left, top, right, bottom = rect.right(), rect.bottom(), rect.left(), rect.top()
+        found = False
+        for y in range(rect.top(), rect.bottom() + 1):
+            for x in range(rect.left(), rect.right() + 1):
+                if QColor(image.pixelColor(x, y)).alpha() > 8:
+                    left = min(left, x)
+                    top = min(top, y)
+                    right = max(right, x)
+                    bottom = max(bottom, y)
+                    found = True
+        if not found:
+            return QPixmap.fromImage(image)
+        padding = int(max(right - left, bottom - top) * 0.08)
+        left = max(rect.left(), left - padding)
+        top = max(rect.top(), top - padding)
+        right = min(rect.right(), right + padding)
+        bottom = min(rect.bottom(), bottom + padding)
+        return QPixmap.fromImage(image.copy(left, top, right - left + 1, bottom - top + 1))
 
     def set_state(self, state: str) -> None:
         self.state = state
@@ -59,6 +87,48 @@ class OrbWidget(QWidget):
             painter.setBrush(glow)
             painter.drawEllipse(center, r, r)
 
+        if not self.orb_pixmap.isNull():
+            size = min(rect.width(), rect.height()) * 0.98 * (1 + breath * 0.12)
+            target = QRectF(center.x() - size / 2, center.y() - size / 2, size, size)
+            painter.setOpacity(0.95 + self.energy * 0.05)
+            painter.drawPixmap(target, self.orb_pixmap, QRectF(self.orb_pixmap.rect()))
+            painter.setOpacity(1.0)
+            self._draw_animated_overlay(painter, center, base_radius, breath, spin, main)
+            return
+
+        self._draw_fallback_orb(painter, center, base_radius, breath, spin, main)
+
+    def _draw_animated_overlay(
+        self,
+        painter: QPainter,
+        center: QPointF,
+        base_radius: float,
+        breath: float,
+        spin: float,
+        main: QColor,
+    ) -> None:
+        painter.setBrush(Qt.NoBrush)
+        arc_color = QColor(main)
+        arc_color.setAlpha(int(95 + self.energy * 115))
+        painter.setPen(QPen(arc_color, 2.4))
+        for index, mult in enumerate((1.10, 1.34)):
+            r = base_radius * mult * (1 + breath * 0.25)
+            painter.drawArc(
+                int(center.x() - r),
+                int(center.y() - r),
+                int(r * 2),
+                int(r * 2),
+                int((-spin - index * 78) * 16),
+                int((-62 + index * 16) * 16),
+            )
+
+        pulse = QColor("#ffb347")
+        pulse.setAlpha(int(70 + self.energy * 80))
+        painter.setPen(QPen(pulse, 1.2))
+        r = base_radius * (0.72 + self.energy * 0.06)
+        painter.drawEllipse(center, r, r)
+
+    def _draw_fallback_orb(self, painter: QPainter, center: QPointF, base_radius: float, breath: float, spin: float, main: QColor) -> None:
         painter.setBrush(Qt.NoBrush)
         for i, mult in enumerate([0.78, 1.0, 1.24]):
             color = QColor(main)

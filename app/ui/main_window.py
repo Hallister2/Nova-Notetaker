@@ -11,10 +11,11 @@ from urllib.parse import urlparse
 import requests
 import websocket
 
-from PySide6.QtCore import QObject, QThread, Qt, QTimer, Signal, Slot
-from PySide6.QtGui import QCursor, QTextDocument
+from PySide6.QtCore import QDate, QObject, QSize, QThread, Qt, QTimer, Signal, Slot
+from PySide6.QtGui import QCursor, QIcon, QPixmap, QTextDocument
 from PySide6.QtWidgets import (
     QApplication,
+    QCalendarWidget,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -46,7 +47,7 @@ from PySide6.QtWidgets import (
 from app.audio.capture_service import CaptureConfig, CaptureService
 from app.audio.device_manager import AudioDevice, AudioDeviceManager
 from app.core.profiles import MeetingProfile, ProfileStore
-from app.core.settings import load_settings, save_settings
+from app.core.settings import APP_ROOT, load_settings, save_settings
 from app.core.templates import NoteTemplate, TemplateStore
 from app.intelligence.insights import InsightItem, MeetingInsights, load_or_build_insights, write_insights_json
 from app.storage.meeting_store import MeetingMetadata, MeetingStore
@@ -65,6 +66,24 @@ CAPTURE_PROFILES = {
 
 DEFAULT_LOOPBACK_DEVICE = "__default_wasapi_loopback__"
 DEFAULT_MIC_DEVICE = "__default_microphone__"
+ASSETS_DIR = APP_ROOT / "assets"
+
+NAV_ASSETS = [
+    ("Capture - Default.png", "Capture - Active.png"),
+    ("Meetings - Default.png", "Meetings - Active.png"),
+    ("Review - Default.png", "Review - Active.png"),
+    ("Meetings - Default.png", "Meetings - Active.png"),
+    ("Review - Default.png", "Review - Active.png"),
+    ("Templates - Default.png", "Templates - Active.png"),
+    ("Settings - Default.png", "Settings - Active.png"),
+]
+
+EMPTY_ASSETS = {
+    "meetings": "Empty - No meetings.png",
+    "actions": "Empty - No Actions.png",
+    "calendar": "Empty - No Calendar.png",
+    "search": "Empty - No Search.png",
+}
 
 
 class SortableTableItem(QTableWidgetItem):
@@ -332,8 +351,8 @@ class MainWindow(QMainWindow):
         self.processing_started_at: datetime | None = None
         self.timer_phase = "idle"
         self.nav_buttons: list[QPushButton] = []
-        self.nav_button_labels = ["Live Capture", "Meetings", "Logs", "Templates", "Settings"]
-        self.compact_nav_labels = ["Live", "Meet", "Logs", "Tpl", "Set"]
+        self.nav_button_labels = ["Live Capture", "Meetings", "Search", "Calendar", "Logs", "Templates", "Settings"]
+        self.compact_nav_labels = ["Live", "Meet", "Search", "Cal", "Logs", "Tpl", "Set"]
         self.current_responsive_mode = ""
         self.stop_requested = False
         self.meeting_overview_windows: list[QDialog] = []
@@ -343,6 +362,9 @@ class MainWindow(QMainWindow):
             self.current_theme = "executive_dark"
 
         self.setWindowTitle("Nova Notetaker")
+        app_icon = self._asset_icon("App Icon.png")
+        if not app_icon.isNull():
+            self.setWindowIcon(app_icon)
         self.setMinimumSize(780, 560)
         self.setStyleSheet(build_stylesheet(self.current_theme))
         self._resize_to_available_screen(preferred_width=1440, preferred_height=820)
@@ -370,7 +392,9 @@ class MainWindow(QMainWindow):
         self.pages = QStackedWidget()
         self.pages.addWidget(self._build_live_page())
         self.pages.addWidget(self._build_meetings_page())
-        self.pages.addWidget(self._build_archive_page())
+        self.pages.addWidget(self._build_search_page())
+        self.pages.addWidget(self._build_calendar_page())
+        self.pages.addWidget(self._build_logs_page())
         self.pages.addWidget(self._build_templates_page())
         self.pages.addWidget(self._build_settings_page())
 
@@ -390,19 +414,20 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(18, 26, 18, 18)
         layout.setSpacing(10)
 
-        logo = QLabel("NOVA")
-        logo.setObjectName("Logo")
-        logo_sub = QLabel("NOTETAKER")
-        logo_sub.setObjectName("LogoSub")
-        layout.addWidget(logo)
-        layout.addWidget(logo_sub)
-        layout.addSpacing(24)
+        self.sidebar_brand = QLabel()
+        self.sidebar_brand.setObjectName("Transparent")
+        self.sidebar_brand.setPixmap(self._asset_pixmap("Brand Mark 3.png", 178, 52))
+        self.sidebar_brand.setMinimumHeight(54)
+        layout.addWidget(self.sidebar_brand)
+        layout.addSpacing(20)
 
         for index, label in enumerate(self.nav_button_labels):
             button = QPushButton(label)
             button.setObjectName("SidebarButton")
             button.setProperty("active", "false")
             button.setCursor(Qt.PointingHandCursor)
+            button.setIcon(self._nav_icon(index, active=False))
+            button.setIconSize(QSize(22, 22))
             button.clicked.connect(lambda checked=False, page=index: self._set_active_nav(page))
             layout.addWidget(button)
             self.nav_buttons.append(button)
@@ -748,6 +773,11 @@ class MainWindow(QMainWindow):
         meetings_panel_layout.setContentsMargins(18, 18, 18, 18)
         meetings_title = QLabel("Meetings")
         meetings_title.setObjectName("Title")
+        self.meetings_empty_state = self._empty_state_widget(
+            "meetings",
+            "No meetings yet",
+            "Captured meetings will appear here after your first recording.",
+        )
         self.meeting_table = QTableWidget(0, 7)
         self.meeting_table.setHorizontalHeaderLabels(["Date", "Time", "Meeting Name", "Status", "Actions", "Review", "Open"])
         self.meeting_table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -760,10 +790,11 @@ class MainWindow(QMainWindow):
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(2, QHeaderView.Stretch)
-        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.Fixed)
         header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(5, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(6, QHeaderView.Fixed)
+        self.meeting_table.setColumnWidth(3, 150)
         self.meeting_table.setColumnWidth(6, 150)
         filters = QHBoxLayout()
         self.meeting_filter_combo = QComboBox()
@@ -800,6 +831,7 @@ class MainWindow(QMainWindow):
         self.archive_status = self._muted_label("Ready")
         meetings_panel_layout.addWidget(meetings_title)
         meetings_panel_layout.addLayout(filters)
+        meetings_panel_layout.addWidget(self.meetings_empty_state, stretch=1)
         meetings_panel_layout.addWidget(self.meeting_table, stretch=1)
         meetings_panel_layout.addLayout(archive_buttons)
         meetings_panel_layout.addWidget(self.archive_status)
@@ -833,7 +865,7 @@ class MainWindow(QMainWindow):
         layout.addStretch()
         return panel
 
-    def _build_archive_page(self) -> QWidget:
+    def _build_search_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(34, 28, 18, 28)
@@ -841,62 +873,10 @@ class MainWindow(QMainWindow):
         panel.setObjectName("Panel")
         panel_layout = QVBoxLayout(panel)
         panel_layout.setContentsMargins(18, 18, 18, 18)
-        title = QLabel("Review Center")
+        title = QLabel("Search")
         title.setObjectName("Title")
         panel_layout.addWidget(title)
-        panel_layout.addWidget(self._muted_label("Track open action items, calendar candidates, search history, and raw processing logs."))
-
-        review_tabs = QTabWidget()
-
-        actions_page = QWidget()
-        actions_layout = QVBoxLayout(actions_page)
-        actions_layout.setContentsMargins(0, 12, 0, 0)
-        actions_header = QHBoxLayout()
-        actions_header.addWidget(self._section_label("Open action dashboard"))
-        actions_header.addStretch()
-        self.refresh_actions_button = QPushButton("Refresh")
-        self.refresh_actions_button.clicked.connect(self.refresh_review_center)
-        actions_header.addWidget(self.refresh_actions_button)
-        actions_layout.addLayout(actions_header)
-        self.action_dashboard_table = QTableWidget(0, 6)
-        self.action_dashboard_table.setHorizontalHeaderLabels(["Meeting", "Owner", "Action", "Due", "Confidence", "Status"])
-        self.action_dashboard_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.action_dashboard_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.action_dashboard_table.verticalHeader().setVisible(False)
-        action_header = self.action_dashboard_table.horizontalHeader()
-        action_header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        action_header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        action_header.setSectionResizeMode(2, QHeaderView.Stretch)
-        action_header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        action_header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
-        action_header.setSectionResizeMode(5, QHeaderView.ResizeToContents)
-        actions_layout.addWidget(self.action_dashboard_table, stretch=1)
-
-        calendar_page = QWidget()
-        calendar_layout = QVBoxLayout(calendar_page)
-        calendar_layout.setContentsMargins(0, 12, 0, 0)
-        calendar_header = QHBoxLayout()
-        calendar_header.addWidget(self._section_label("Calendar candidates"))
-        calendar_header.addStretch()
-        self.export_all_calendar_button = QPushButton("Export all dates")
-        self.export_all_calendar_button.clicked.connect(self.export_all_calendar_ics)
-        calendar_header.addWidget(self.export_all_calendar_button)
-        calendar_layout.addLayout(calendar_header)
-        self.calendar_table = QTableWidget(0, 4)
-        self.calendar_table.setHorizontalHeaderLabels(["Meeting", "Date", "Context", "Confidence"])
-        self.calendar_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.calendar_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.calendar_table.verticalHeader().setVisible(False)
-        calendar_table_header = self.calendar_table.horizontalHeader()
-        calendar_table_header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        calendar_table_header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        calendar_table_header.setSectionResizeMode(2, QHeaderView.Stretch)
-        calendar_table_header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        calendar_layout.addWidget(self.calendar_table, stretch=1)
-
-        search_page = QWidget()
-        search_layout = QVBoxLayout(search_page)
-        search_layout.setContentsMargins(0, 12, 0, 0)
+        panel_layout.addWidget(self._muted_label("Search meeting titles, notes, transcripts, owners, and dates."))
         search_controls = QHBoxLayout()
         self.meeting_search_input = QLineEdit()
         self.meeting_search_input.setPlaceholderText("Search notes, transcripts, titles, owners, dates...")
@@ -905,33 +885,102 @@ class MainWindow(QMainWindow):
         self.meeting_search_button.clicked.connect(self.search_meetings)
         search_controls.addWidget(self.meeting_search_input, stretch=1)
         search_controls.addWidget(self.meeting_search_button)
-        search_layout.addLayout(search_controls)
+        panel_layout.addLayout(search_controls)
+        self.search_empty_state = self._empty_state_widget(
+            "search",
+            "No search results",
+            "Search meeting titles, notes, transcripts, owners, and dates.",
+        )
         self.search_results_table = QTableWidget(0, 4)
         self.search_results_table.setHorizontalHeaderLabels(["Meeting", "File", "Match", "Open"])
         self.search_results_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.search_results_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.search_results_table.verticalHeader().setVisible(False)
+        self.search_results_table.setVisible(False)
         search_header = self.search_results_table.horizontalHeader()
         search_header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         search_header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
         search_header.setSectionResizeMode(2, QHeaderView.Stretch)
         search_header.setSectionResizeMode(3, QHeaderView.Fixed)
         self.search_results_table.setColumnWidth(3, 130)
-        search_layout.addWidget(self.search_results_table, stretch=1)
+        panel_layout.addWidget(self.search_empty_state, stretch=1)
+        panel_layout.addWidget(self.search_results_table, stretch=1)
+        layout.addWidget(panel)
+        return page
 
-        logs_page = QWidget()
-        logs_layout = QVBoxLayout(logs_page)
-        logs_layout.setContentsMargins(0, 12, 0, 0)
+    def _build_calendar_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(34, 28, 18, 28)
+        panel = QFrame()
+        panel.setObjectName("Panel")
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(18, 18, 18, 18)
+        title = QLabel("Calendar")
+        title.setObjectName("Title")
+        panel_layout.addWidget(title)
+        panel_layout.addWidget(self._muted_label("Review detected dates by meeting and export only what you need."))
+
+        calendar_header = QHBoxLayout()
+        calendar_header.addWidget(QLabel("Meeting"))
+        self.calendar_meeting_filter = QComboBox()
+        self.calendar_meeting_filter.currentIndexChanged.connect(self._refresh_calendar_candidates)
+        calendar_header.addWidget(self.calendar_meeting_filter, stretch=1)
+        self.export_all_calendar_button = QPushButton("Export visible dates")
+        self.export_all_calendar_button.clicked.connect(self.export_all_calendar_ics)
+        calendar_header.addWidget(self.export_all_calendar_button)
+        panel_layout.addLayout(calendar_header)
+
+        calendar_grid = QGridLayout()
+        calendar_grid.setSpacing(16)
+        self.calendar_widget = QCalendarWidget()
+        self.calendar_widget.setGridVisible(True)
+        self.calendar_widget.setMinimumWidth(280)
+        calendar_grid.addWidget(self.calendar_widget, 0, 0)
+        right_side = QWidget()
+        right_layout = QVBoxLayout(right_side)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        self.calendar_empty_state = self._empty_state_widget(
+            "calendar",
+            "No calendar candidates",
+            "Detected dates from meetings will appear here.",
+        )
+        self.calendar_table = QTableWidget(0, 4)
+        self.calendar_table.setHorizontalHeaderLabels(["Meeting", "Date", "Context", "Confidence"])
+        self.calendar_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.calendar_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.calendar_table.verticalHeader().setVisible(False)
+        self.calendar_table.itemSelectionChanged.connect(self._calendar_row_selected)
+        calendar_table_header = self.calendar_table.horizontalHeader()
+        calendar_table_header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        calendar_table_header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        calendar_table_header.setSectionResizeMode(2, QHeaderView.Stretch)
+        calendar_table_header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        right_layout.addWidget(self.calendar_empty_state, stretch=1)
+        right_layout.addWidget(self.calendar_table, stretch=1)
+        calendar_grid.addWidget(right_side, 0, 1)
+        calendar_grid.setColumnStretch(0, 0)
+        calendar_grid.setColumnStretch(1, 1)
+        panel_layout.addLayout(calendar_grid, stretch=1)
+        layout.addWidget(panel)
+        return page
+
+    def _build_logs_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(34, 28, 18, 28)
+        panel = QFrame()
+        panel.setObjectName("Panel")
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(18, 18, 18, 18)
+        title = QLabel("Logs")
+        title.setObjectName("Title")
+        panel_layout.addWidget(title)
+        panel_layout.addWidget(self._muted_label("Raw output logs for capture, transcription, and processing."))
         self.log_output = QTextEdit()
         self.log_output.setReadOnly(True)
         self.log_output.append("Nova Notetaker online.")
-        logs_layout.addWidget(self.log_output, stretch=1)
-
-        review_tabs.addTab(actions_page, "Actions")
-        review_tabs.addTab(calendar_page, "Calendar")
-        review_tabs.addTab(search_page, "Search")
-        review_tabs.addTab(logs_page, "Raw logs")
-        panel_layout.addWidget(review_tabs, stretch=1)
+        panel_layout.addWidget(self.log_output, stretch=1)
         layout.addWidget(panel)
         return page
 
@@ -1613,8 +1662,53 @@ class MainWindow(QMainWindow):
         label.setObjectName("StatusBadge")
         label.setProperty("state", self._meeting_status_state(text))
         label.setAlignment(Qt.AlignCenter)
-        label.setMinimumWidth(92)
+        label.setMinimumWidth(0)
+        label.setMaximumWidth(138)
         return label
+
+    def _asset_path(self, file_name: str) -> Path:
+        return ASSETS_DIR / file_name
+
+    def _asset_icon(self, file_name: str) -> QIcon:
+        path = self._asset_path(file_name)
+        return QIcon(str(path)) if path.exists() else QIcon()
+
+    def _asset_pixmap(self, file_name: str, max_width: int, max_height: int) -> QPixmap:
+        path = self._asset_path(file_name)
+        pixmap = QPixmap(str(path)) if path.exists() else QPixmap()
+        if pixmap.isNull():
+            return pixmap
+        return pixmap.scaled(max_width, max_height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+
+    def _nav_icon(self, index: int, active: bool) -> QIcon:
+        if index < 0 or index >= len(NAV_ASSETS):
+            return QIcon()
+        default_name, active_name = NAV_ASSETS[index]
+        return self._asset_icon(active_name if active else default_name)
+
+    def _empty_state_widget(self, asset_key: str, title: str, detail: str = "") -> QWidget:
+        widget = QWidget()
+        widget.setObjectName("Transparent")
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(18, 24, 18, 24)
+        layout.setSpacing(10)
+        asset_name = EMPTY_ASSETS.get(asset_key, "")
+        image = QLabel()
+        image.setAlignment(Qt.AlignCenter)
+        image.setPixmap(self._asset_pixmap(asset_name, 180, 180))
+        title_label = QLabel(title)
+        title_label.setObjectName("PanelTitle")
+        title_label.setAlignment(Qt.AlignCenter)
+        detail_label = self._muted_label(detail)
+        detail_label.setAlignment(Qt.AlignCenter)
+        detail_label.setWordWrap(True)
+        layout.addStretch()
+        layout.addWidget(image)
+        layout.addWidget(title_label)
+        if detail:
+            layout.addWidget(detail_label)
+        layout.addStretch()
+        return widget
 
     @staticmethod
     def _muted_label(text: str) -> QLabel:
@@ -1626,7 +1720,9 @@ class MainWindow(QMainWindow):
     def _set_active_nav(self, index: int) -> None:
         self.pages.setCurrentIndex(index)
         for button_index, button in enumerate(self.nav_buttons):
-            button.setProperty("active", "true" if button_index == index else "false")
+            is_active = button_index == index
+            button.setProperty("active", "true" if is_active else "false")
+            button.setIcon(self._nav_icon(button_index, active=is_active))
             button.style().unpolish(button)
             button.style().polish(button)
 
@@ -1748,8 +1844,10 @@ class MainWindow(QMainWindow):
     def _set_sidebar_mode(self, width: int, compact: bool, show_status: bool) -> None:
         self.sidebar.setFixedWidth(width)
         self.sidebar.layout().setContentsMargins(12 if compact else 18, 22, 12 if compact else 18, 16)
+        self.sidebar_brand.setVisible(not compact)
         for index, button in enumerate(self.nav_buttons):
             button.setText(self.compact_nav_labels[index] if compact else self.nav_button_labels[index])
+            button.setIconSize(QSize(20 if compact else 22, 20 if compact else 22))
         self.sidebar_ready_label.parentWidget().setVisible(show_status)
 
     def _set_live_page_margins(self, left: int, top: int, right: int, bottom: int, spacing: int) -> None:
@@ -2465,7 +2563,7 @@ class MainWindow(QMainWindow):
         return min(device.channels, 2)
 
     def open_settings(self) -> None:
-        self._set_active_nav(4)
+        self._set_active_nav(6)
 
     def _populate_settings_device_controls(self) -> None:
         if not hasattr(self, "settings_mic_combo"):
@@ -2680,16 +2778,24 @@ class MainWindow(QMainWindow):
             status_label = self._meeting_status_label(status, review_count, has_transcript)
             values = [date_text, time_text, title, status_label, str(open_actions), str(review_count)]
             for column, value in enumerate(values):
-                item = SortableTableItem(value)
+                display_value = "" if column == 3 else value
+                item = SortableTableItem(display_value)
                 item.setData(Qt.UserRole, str(folder))
                 item.setData(Qt.UserRole + 1, self._meeting_sort_key(column, date_text, time_text, title, status, open_actions, review_count))
                 if column in (0, 1):
+                    item.setTextAlignment(Qt.AlignCenter)
+                if column == 3:
                     item.setTextAlignment(Qt.AlignCenter)
                 if column in (4, 5):
                     item.setTextAlignment(Qt.AlignCenter)
                 self.meeting_table.setItem(row, column, item)
 
-            self.meeting_table.setCellWidget(row, 3, self._status_badge(status_label))
+            status_cell = QWidget()
+            status_cell.setObjectName("Transparent")
+            status_layout = QHBoxLayout(status_cell)
+            status_layout.setContentsMargins(6, 4, 6, 4)
+            status_layout.addWidget(self._status_badge(status_label))
+            self.meeting_table.setCellWidget(row, 3, status_cell)
 
             open_button = QPushButton("Open")
             open_button.setText("Open meeting")
@@ -2709,9 +2815,14 @@ class MainWindow(QMainWindow):
 
         self.meeting_table.setSortingEnabled(True)
         self.meeting_table.sortItems(0, Qt.DescendingOrder)
+        self.meeting_table.setColumnWidth(3, 150)
         self.meeting_table.setColumnWidth(6, 150)
         if self.meeting_table.rowCount() and self._selected_meeting_folder() is None:
             self.meeting_table.selectRow(0)
+        if hasattr(self, "meetings_empty_state"):
+            has_rows = self.meeting_table.rowCount() > 0
+            self.meeting_table.setVisible(has_rows)
+            self.meetings_empty_state.setVisible(not has_rows)
         if hasattr(self, "open_latest_button"):
             self.open_latest_button.setEnabled(bool(self.meeting_store.list_meetings()))
         self.refresh_review_center()
@@ -2767,10 +2878,34 @@ class MainWindow(QMainWindow):
             self.meeting_preview.setPlainText(content)
 
     def refresh_review_center(self) -> None:
-        if hasattr(self, "action_dashboard_table"):
-            self._refresh_action_dashboard()
         if hasattr(self, "calendar_table"):
+            self._populate_calendar_meeting_filter()
             self._refresh_calendar_candidates()
+
+    def _populate_calendar_meeting_filter(self) -> None:
+        if not hasattr(self, "calendar_meeting_filter"):
+            return
+        current_value = self.calendar_meeting_filter.currentData()
+        self.calendar_meeting_filter.blockSignals(True)
+        self.calendar_meeting_filter.clear()
+        self.calendar_meeting_filter.addItem("All meetings", "")
+        for folder in self.meeting_store.list_meetings():
+            try:
+                metadata = self.meeting_store.read_metadata(folder)
+                label = f"{metadata.title or folder.name} - {metadata.started_at[:10]}"
+            except Exception:
+                label = folder.name
+            self.calendar_meeting_filter.addItem(label, str(folder))
+        select_combo_by_data(self.calendar_meeting_filter, str(current_value or ""))
+        self.calendar_meeting_filter.blockSignals(False)
+
+    def _calendar_filter_folders(self) -> list[Path]:
+        if not hasattr(self, "calendar_meeting_filter"):
+            return self.meeting_store.list_meetings()
+        selected = str(self.calendar_meeting_filter.currentData() or "")
+        if selected:
+            return [Path(selected)]
+        return self.meeting_store.list_meetings()
 
     def _refresh_action_dashboard(self) -> None:
         self.action_dashboard_table.setRowCount(0)
@@ -2797,12 +2932,16 @@ class MainWindow(QMainWindow):
                     item = QTableWidgetItem(value)
                     item.setData(Qt.UserRole, str(folder))
                     item.setData(Qt.UserRole + 1, action_index)
-                    self.action_dashboard_table.setItem(row, column, item)
+                self.action_dashboard_table.setItem(row, column, item)
                 self.action_dashboard_table.setRowHeight(row, 38)
+        has_rows = self.action_dashboard_table.rowCount() > 0
+        self.action_dashboard_table.setVisible(has_rows)
+        self.actions_empty_state.setVisible(not has_rows)
 
     def _refresh_calendar_candidates(self) -> None:
+        self.calendar_table.blockSignals(True)
         self.calendar_table.setRowCount(0)
-        for folder in self.meeting_store.list_meetings():
+        for folder in self._calendar_filter_folders():
             try:
                 metadata = self.meeting_store.read_metadata(folder)
                 insights = load_or_build_insights(folder)
@@ -2822,10 +2961,63 @@ class MainWindow(QMainWindow):
                     item.setData(Qt.UserRole, str(folder))
                     self.calendar_table.setItem(row, column, item)
                 self.calendar_table.setRowHeight(row, 36)
+        self.calendar_table.blockSignals(False)
+        has_rows = self.calendar_table.rowCount() > 0
+        self.calendar_table.setVisible(has_rows)
+        self.calendar_empty_state.setVisible(not has_rows)
+
+    def _calendar_row_selected(self) -> None:
+        if not hasattr(self, "calendar_widget"):
+            return
+        selected = self.calendar_table.selectedItems()
+        if not selected:
+            return
+        row = selected[0].row()
+        date_item = self.calendar_table.item(row, 1)
+        meeting_item = self.calendar_table.item(row, 0)
+        if not date_item or not meeting_item:
+            return
+        folder = Path(str(meeting_item.data(Qt.UserRole) or ""))
+        try:
+            metadata = self.meeting_store.read_metadata(folder)
+        except Exception:
+            metadata = None
+        qdate = self._calendar_qdate_from_text(date_item.text(), metadata)
+        if qdate and qdate.isValid():
+            self.calendar_widget.setSelectedDate(qdate)
+            self.calendar_widget.showSelectedDate()
+
+    @staticmethod
+    def _calendar_qdate_from_text(text: str, metadata: MeetingMetadata | None) -> QDate | None:
+        cleaned = re.sub(r"\s+", " ", text.strip())
+        if not cleaned:
+            return None
+        base = None
+        if metadata:
+            try:
+                base = datetime.fromisoformat(metadata.started_at)
+            except ValueError:
+                base = None
+        if cleaned.lower() == "tomorrow" and base:
+            target = base.toordinal() + 1
+            value = datetime.fromordinal(target)
+            return QDate(value.year, value.month, value.day)
+        formats = ["%Y-%m-%d", "%B %d, %Y", "%b %d, %Y", "%A, %B %d, %Y", "%A, %B %d", "%B %d", "%b %d"]
+        for fmt in formats:
+            try:
+                value = datetime.strptime(cleaned, fmt)
+                year = value.year if "%Y" in fmt else (base.year if base else datetime.now().year)
+                return QDate(year, value.month, value.day)
+            except ValueError:
+                continue
+        return None
 
     def search_meetings(self) -> None:
         query = self.meeting_search_input.text().strip().lower() if hasattr(self, "meeting_search_input") else ""
         if not query:
+            self.search_results_table.setRowCount(0)
+            self.search_results_table.setVisible(False)
+            self.search_empty_state.setVisible(True)
             return
         self.search_results_table.setRowCount(0)
         for folder in self.meeting_store.list_meetings():
@@ -2843,6 +3035,9 @@ class MainWindow(QMainWindow):
                     if query in plain.lower() or query in title.lower():
                         self._add_search_result(folder, title, file_name, plain[:220] or title)
                         break
+        has_rows = self.search_results_table.rowCount() > 0
+        self.search_results_table.setVisible(has_rows)
+        self.search_empty_state.setVisible(not has_rows)
 
     def _add_search_result(self, folder: Path, title: str, file_name: str, match: str) -> None:
         row = self.search_results_table.rowCount()
@@ -3229,7 +3424,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Nova Notetaker", "No selected meetings could be prepared for reprocess.")
             return
 
-        self._set_active_nav(2)
+        self._set_active_nav(4)
         self.archive_status.setText(f"Batch reprocessing {len(jobs)} meeting(s)...")
         self.reprocess_button.setEnabled(False)
         self.batch_reprocess_button.setEnabled(False)
@@ -3328,8 +3523,9 @@ class MainWindow(QMainWindow):
             self.log(f"Exported calendar candidates: {path}")
 
     def export_all_calendar_ics(self) -> None:
-        folders = self.meeting_store.list_meetings()
-        path = self._export_calendar_ics_for_folders(folders, self.meeting_store.meetings_root / "nova_calendar_candidates.ics")
+        folders = self._calendar_filter_folders()
+        selected_label = "all" if len(folders) != 1 else self._safe_file_label(folders[0].name)
+        path = self._export_calendar_ics_for_folders(folders, self.meeting_store.meetings_root / f"nova_calendar_candidates_{selected_label}.ics")
         if path:
             QMessageBox.information(self, "Nova Notetaker", f"Calendar candidates exported:\n{path}")
             self.log(f"Exported calendar candidates: {path}")
@@ -3376,6 +3572,10 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _ics_escape(text: str) -> str:
         return text.replace("\\", "\\\\").replace("\n", "\\n").replace(",", "\\,").replace(";", "\\;")
+
+    @staticmethod
+    def _safe_file_label(text: str) -> str:
+        return re.sub(r"[^a-zA-Z0-9_-]+", "-", text).strip("-").lower() or "meeting"
 
     @staticmethod
     def _format_duration(seconds: float) -> str:

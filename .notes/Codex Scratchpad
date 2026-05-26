@@ -431,6 +431,38 @@ Potential future insight improvements:
   - `py_compile` passed for changed files.
   - Relevant unit suite passed: 27 tests OK.
 
+## 2026-05-26 Update - Search / Calendar / Logs Split
+
+- Reworked the former Review Center into separate sidebar pages:
+  - Search
+  - Calendar
+  - Logs
+  - Templates
+  - Settings
+
+- Search:
+  - Pulled out of the old Review Center tab structure.
+  - Now has its own first-class sidebar page.
+
+- Calendar:
+  - Pulled out of the old Review Center tab structure.
+  - Added a meeting filter so detected dates can be viewed by:
+    - All meetings
+    - One selected meeting
+  - `Export visible dates` now respects the selected meeting filter.
+  - Added a calendar widget beside the candidate list.
+  - Selecting a date row moves the calendar to that date when Nova can parse it.
+  - Supported parsing includes ISO dates, month/day formats, and "Tomorrow" relative to meeting start time.
+
+- Logs:
+  - Renamed sidebar item back to Logs.
+  - Logs now sits above Templates.
+  - It contains only raw capture/transcription/processing log output.
+
+- Verification:
+  - `py_compile` passed for `app/ui/main_window.py`.
+  - Relevant unit suite passed: 27 tests OK.
+
 ## Communication Notes For ChatGPT / Design Team
 
 When giving design feedback, focus on:
