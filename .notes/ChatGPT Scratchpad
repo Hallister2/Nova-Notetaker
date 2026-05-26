@@ -1,6 +1,6 @@
 # ChatGPT Scratchpad
 
-Last updated: 2026-05-25
+Last updated: 2026-05-26
 
 Purpose: This is the working handoff between ChatGPT, Chad, Codex, and ongoing design/product thinking around Nova Notetaker. Keep this file current with design direction, UX decisions, workflow concerns, branding guidance, UI review notes, product recommendations, and unresolved design questions.
 
@@ -55,6 +55,16 @@ Current priority should shift away from major feature expansion and toward:
 - Consistency.
 - Perceived quality.
 - UX confidence.
+
+The product is entering the transition from:
+
+- Interesting engineering project.
+
+Toward:
+
+- Believable enterprise software.
+
+That transition is now primarily a UX and design challenge.
 
 ## Design Direction
 
@@ -125,6 +135,14 @@ The most valuable outputs are:
 - Confidence scoring.
 
 The UI should progressively prioritize insights over raw transcript visibility.
+
+Long-term product framing should continue shifting from:
+
+- Meeting notes.
+
+Toward:
+
+- Meeting intelligence.
 
 ## Current UX Risks
 
@@ -212,6 +230,25 @@ Current recommendation:
 - Keep insights highly visible.
 - Minimize clutter.
 
+Recommended information hierarchy for Meeting Overview:
+
+1. Executive Summary.
+2. Key Decisions.
+3. Action Items.
+4. Risks / Review Needed.
+5. Structured Notes.
+6. Raw Transcript.
+
+The current transcript experience should eventually become less visually dominant.
+
+Potential improvements:
+
+- Collapsed transcript sections by default.
+- Reduced transcript contrast.
+- Jump-to-transcript links.
+- Stronger insight cards.
+- Larger visual emphasis on actions and decisions.
+
 ## Branding Notes
 
 Orange is the correct brand accent.
@@ -290,6 +327,11 @@ Current recommendation:
 - Light theme should prioritize all-day usability.
 - Gradient theme should remain business-safe and restrained.
 
+Current recommendation:
+
+- Focus on polishing Executive Dark first.
+- Perfect one flagship experience before heavily refining secondary themes.
+
 Design watch areas:
 
 - Markdown readability.
@@ -312,6 +354,38 @@ Highest current design priorities:
 - Refine Meeting Overview polish.
 - Refine Light and Gradient themes.
 
+Additional recommended priorities:
+
+- Add quality/status badges to Meetings.
+- Improve perceived responsiveness.
+- Add loading/skeleton states.
+- Add smoother transitions.
+- Improve empty states.
+- Reduce visible infrastructure complexity.
+
+## Design System Recommendation
+
+The project is reaching the point where a formal design system is recommended.
+
+Suggested future document:
+
+- .notes/UI Design System
+
+Potential areas to standardize:
+
+- Typography scale.
+- Spacing scale.
+- Border radius usage.
+- Card layouts.
+- Badge behavior.
+- Accent usage.
+- Hover states.
+- Status colors.
+- Animation timing.
+- Density rules.
+
+Without standardization, long-term UI consistency may degrade as the application grows.
+
 ## UX Philosophy
 
 Nova should feel:
@@ -325,6 +399,14 @@ Nova should feel:
 - Fast.
 
 The UI should communicate confidence without feeling experimental.
+
+Preferred emotional tone:
+
+- Calm executive productivity tool with embedded AI.
+
+Not:
+
+- Futuristic AI showcase.
 
 ## Screen Testing Guidance
 
@@ -344,6 +426,8 @@ Enterprise polish is heavily influenced by:
 - Information density.
 - Predictable interactions.
 
+Screenshot-based review should become part of the standard iteration process.
+
 ## Future Product Opportunities
 
 Potential future opportunities:
@@ -359,6 +443,8 @@ Potential future opportunities:
 - Team/project tagging.
 - Executive summary templates.
 - Technical review templates.
+- Cross-meeting unresolved-item tracking.
+- Organization memory/search.
 
 ## Communication Notes For Codex / Engineering
 
@@ -378,3 +464,11 @@ When implementing workflow changes, prioritize:
 - Fast review workflows.
 - Easy action-item visibility.
 - Long-term meeting usability.
+
+When implementing future features, avoid:
+
+- Feature overload.
+- Excessive dashboard density.
+- Developer-centric UX.
+- Infrastructure-heavy language.
+- Excessive visual effects.
