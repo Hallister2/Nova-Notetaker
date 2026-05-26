@@ -301,6 +301,8 @@ class MainWindow(QMainWindow):
         self.active_preview_file = "notes.md"
         self.processing_mode = "full"
         self.recording_started_at: datetime | None = None
+        self.processing_started_at: datetime | None = None
+        self.timer_phase = "idle"
         self.nav_buttons: list[QPushButton] = []
         self.nav_button_labels = ["Live Capture", "Meetings", "Logs", "Templates", "Settings"]
         self.compact_nav_labels = ["Live", "Meet", "Logs", "Tpl", "Set"]
@@ -414,15 +416,10 @@ class MainWindow(QMainWindow):
         title_block.addWidget(title)
         title_block.addWidget(subtitle)
 
-        self.new_meeting_button = QPushButton("Start Recording")
-        self.new_meeting_button.setObjectName("PrimaryButton")
-        self.new_meeting_button.clicked.connect(self.start_capture)
-        self.start_button = self.new_meeting_button
         header.addLayout(title_block)
         header.addStretch()
         theme_toggle = self._build_theme_toggle()
         header.addWidget(theme_toggle)
-        header.addWidget(self.new_meeting_button)
         layout.addLayout(header)
 
         main_grid = QGridLayout()
@@ -648,14 +645,15 @@ class MainWindow(QMainWindow):
         layout.setSpacing(16)
         self.mark_important_button = QPushButton("Mark Important")
         self.mark_important_button.setEnabled(False)
-        self.stop_button = QPushButton("Stop Recording")
-        self.stop_button.setObjectName("DangerButton")
-        self.stop_button.clicked.connect(self.stop_capture)
-        self.stop_button.setEnabled(False)
+        self.recording_button = QPushButton("Start Recording")
+        self.recording_button.setObjectName("PrimaryButton")
+        self.recording_button.clicked.connect(self.toggle_capture)
+        self.start_button = self.recording_button
+        self.stop_button = self.recording_button
         self.add_note_button = QPushButton("Add Note")
         self.add_note_button.setEnabled(False)
         layout.addWidget(self.mark_important_button)
-        layout.addWidget(self.stop_button, stretch=1)
+        layout.addWidget(self.recording_button, stretch=1)
         layout.addWidget(self.add_note_button)
         return bar
 
@@ -1345,21 +1343,27 @@ class MainWindow(QMainWindow):
         ):
             control.setMinimumHeight(36)
 
-        form.addRow("Microphone", self.settings_mic_combo)
-        form.addRow("System audio", self.settings_loopback_combo)
-        form.addRow("Capture profile", self.settings_profile_combo)
-        form.addRow("AI provider", self.settings_provider_combo)
-        form.addRow("Ollama URL", self.settings_ollama_url)
-        form.addRow("Ollama model", self.settings_ollama_model)
-        form.addRow("AI timeout", self.settings_ai_timeout)
-        form.addRow("WhisperLive", self.settings_transcription_enabled)
-        form.addRow("WhisperLive URL", self.settings_whisper_url)
-        form.addRow("Whisper model", self.settings_whisper_model)
-        form.addRow("Whisper language", self.settings_whisper_language)
-        form.addRow("Voice activity detection", self.settings_use_vad)
-        form.addRow("Transcript cleanup", self.settings_cross_bleed_cleanup)
-        form.addRow("Transcription timeout", self.settings_transcription_timeout)
-        form.addRow("Long recording chunk size", self.settings_long_audio_chunk_seconds)
+        self.settings_ollama_model.setPlaceholderText("Example: llama3.1:latest")
+        self.settings_whisper_model.setPlaceholderText("Example: small")
+        self.settings_whisper_language.setPlaceholderText("Example: en")
+        self.settings_ollama_url.setPlaceholderText("Example: http://192.168.200.2:11434")
+        self.settings_whisper_url.setPlaceholderText("Example: http://192.168.200.2:9090")
+
+        form.addRow("Microphone", self._setting_with_hint(self.settings_mic_combo, "Use Windows default unless you need to force a specific input device."))
+        form.addRow("System audio", self._setting_with_hint(self.settings_loopback_combo, "Use Windows default output for the most portable Teams/browser/audio setup."))
+        form.addRow("Capture profile", self._setting_with_hint(self.settings_profile_combo, "Tunes cleanup behavior for laptop speakers, headphones, conference rooms, or debug capture."))
+        form.addRow("AI provider", self._setting_with_hint(self.settings_provider_combo, "Ollama is currently wired for local note generation. OpenAI is reserved for a later provider pass."))
+        form.addRow("Ollama URL", self._setting_with_hint(self.settings_ollama_url, "Base URL for your Ollama server. Use the same address you use for Ollama API calls."))
+        form.addRow("Ollama model", self._setting_with_hint(self.settings_ollama_model, "Any installed Ollama model name works here. Run `ollama list` on the Ollama host to see available models."))
+        form.addRow("AI timeout", self._setting_with_hint(self.settings_ai_timeout, "Maximum seconds to wait for notes generation before Nova treats it as failed."))
+        form.addRow("WhisperLive", self._setting_with_hint(self.settings_transcription_enabled, "Turn this on to transcribe audio with your WhisperLive server during processing."))
+        form.addRow("WhisperLive URL", self._setting_with_hint(self.settings_whisper_url, "Base URL for WhisperLive. Nova converts http/https to the matching WebSocket connection."))
+        form.addRow("Whisper model", self._setting_with_hint(self.settings_whisper_model, "Common values are tiny, base, small, medium, and large-v3. Availability depends on your WhisperLive container/config. Check the container logs or startup command for enabled/default model behavior."))
+        form.addRow("Whisper language", self._setting_with_hint(self.settings_whisper_language, "Use ISO-style language codes such as en. Leave as en for English meetings."))
+        form.addRow("Voice activity detection", self._setting_with_hint(self.settings_use_vad, "Helps WhisperLive ignore silence and non-speech. Usually leave enabled."))
+        form.addRow("Transcript cleanup", self._setting_with_hint(self.settings_cross_bleed_cleanup, "Reduces duplicate mic/system bleed and repeated transcript fragments before notes generation."))
+        form.addRow("Transcription timeout", self._setting_with_hint(self.settings_transcription_timeout, "Maximum seconds to wait for each WhisperLive transcription request."))
+        form.addRow("Long recording chunk size", self._setting_with_hint(self.settings_long_audio_chunk_seconds, "Long recordings are split into chunks before WhisperLive. Lower this if long meetings disconnect; 120-180 seconds is a good range."))
         panel_layout.addLayout(form)
 
         button_row = QHBoxLayout()
@@ -1377,6 +1381,19 @@ class MainWindow(QMainWindow):
         scroll.setWidget(panel)
         layout.addWidget(scroll)
         return page
+
+    def _setting_with_hint(self, control: QWidget, hint: str) -> QWidget:
+        container = QWidget()
+        container.setObjectName("Transparent")
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        hint_label = self._muted_label(hint)
+        hint_label.setWordWrap(True)
+        control.setToolTip(hint)
+        layout.addWidget(control)
+        layout.addWidget(hint_label)
+        return container
 
     def _placeholder_page(self, title_text: str, body_text: str) -> QWidget:
         page = QWidget()
@@ -1818,10 +1835,17 @@ class MainWindow(QMainWindow):
         self._set_transcript_rows(rows)
 
     def _update_elapsed_timer(self) -> None:
-        if not self.recording_started_at:
+        if self.timer_phase == "recording":
+            started_at = self.recording_started_at
+        elif self.timer_phase == "processing":
+            started_at = self.processing_started_at
+        else:
+            started_at = None
+
+        if not started_at:
             self.elapsed_label.setText("00:00:00")
             return
-        elapsed = datetime.now() - self.recording_started_at
+        elapsed = datetime.now() - started_at
         total_seconds = max(0, int(elapsed.total_seconds()))
         hours, remainder = divmod(total_seconds, 3600)
         minutes, seconds = divmod(remainder, 60)
@@ -2048,6 +2072,14 @@ class MainWindow(QMainWindow):
         if not self.loopbacks:
             self.log("No WASAPI loopback devices detected. On Windows, install/check pyaudiowpatch and confirm output devices are enabled.")
 
+    def toggle_capture(self) -> None:
+        if self.worker is not None:
+            self.stop_capture()
+            return
+        if self.processing_thread is not None:
+            return
+        self.start_capture()
+
     def start_capture(self) -> None:
         capture_mic = self.capture_mic_toggle.isChecked()
         self.settings["audio"]["capture_mic"] = capture_mic
@@ -2106,20 +2138,23 @@ class MainWindow(QMainWindow):
         self.worker_thread.start()
 
         self.stop_requested = False
-        self.start_button.setEnabled(False)
-        self.start_button.setText("Recording")
-        self.stop_button.setEnabled(True)
+        self.recording_button.setEnabled(True)
+        self.recording_button.setText("Stop Recording")
+        self.recording_button.setObjectName("DangerButton")
+        self._refresh_widget_style(self.recording_button)
         self.settings_button.setEnabled(False)
         self.capture_mic_toggle.setEnabled(False)
         self.reprocess_button.setEnabled(False)
         self.recording_started_at = datetime.now()
+        self.processing_started_at = None
+        self.timer_phase = "recording"
         self.elapsed_timer.start(1000)
         self._update_elapsed_timer()
         self.orb.set_state("recording")
         self.status_label.setObjectName("RedText")
         self.status_label.setText("Recording")
         self._refresh_widget_style(self.status_label)
-        self.orb_caption.setText("Recording in progress")
+        self.orb_caption.setText("Recording time")
         self.footer_save_label.setText(f"Saving to: {self.meeting_folder}")
         self._set_transcript_rows([("--:--:--", "Meeting Audio", "Capture is running. Transcript will appear after processing.")])
         self.log(f"Meeting folder: {self.meeting_folder}")
@@ -2185,7 +2220,8 @@ class MainWindow(QMainWindow):
         if self.stop_requested:
             return
         self.stop_requested = True
-        self.stop_button.setEnabled(False)
+        self.recording_button.setEnabled(False)
+        self.recording_button.setText("Stopping...")
         self.status_label.setText("Stopping")
         self.orb_caption.setText("Finalizing capture")
         self.log("Stop requested. Waiting for audio streams to close.")
@@ -2202,10 +2238,21 @@ class MainWindow(QMainWindow):
         self.worker = None
         self.worker_thread = None
         self.stop_requested = False
-        self.stop_button.setEnabled(False)
+        if self.recording_started_at:
+            recording_seconds = max(0, int((datetime.now() - self.recording_started_at).total_seconds()))
+            hours, remainder = divmod(recording_seconds, 3600)
+            minutes, seconds = divmod(remainder, 60)
+            self.log(f"Recording duration: {hours:02}:{minutes:02}:{seconds:02}")
+        self.recording_button.setEnabled(False)
+        self.recording_button.setText("Processing...")
         self.orb.set_state("processing")
         self.status_label.setText("Processing")
-        self.orb_caption.setText("Generating notes")
+        self.orb_caption.setText("Processing time")
+        self.processing_started_at = datetime.now()
+        self.timer_phase = "processing"
+        self.elapsed_label.setText("00:00:00")
+        self.elapsed_timer.start(1000)
+        self._update_elapsed_timer()
 
         if self.metadata and self.meeting_folder:
             self._start_processing(self.meeting_folder, self.metadata, mode="full")
@@ -2321,6 +2368,12 @@ class MainWindow(QMainWindow):
 
     def _start_processing(self, folder: Path, metadata: MeetingMetadata, mode: str = "full") -> None:
         self.processing_mode = mode
+        if self.timer_phase != "processing":
+            self.processing_started_at = datetime.now()
+            self.timer_phase = "processing"
+            self.elapsed_label.setText("00:00:00")
+            self.elapsed_timer.start(1000)
+            self._update_elapsed_timer()
         self.processing_thread = QThread(self)
         self.processing_worker = ProcessingWorker(folder, metadata, mode=mode)
         self.processing_worker.moveToThread(self.processing_thread)
@@ -2333,14 +2386,19 @@ class MainWindow(QMainWindow):
         self.processing_thread.start()
 
     def _processing_finished(self) -> None:
+        processing_seconds = 0
+        if self.processing_started_at:
+            processing_seconds = max(0, int((datetime.now() - self.processing_started_at).total_seconds()))
         self.processing_worker = None
         self.processing_thread = None
-        self.start_button.setEnabled(True)
-        self.start_button.setText("Start Recording")
-        self.stop_button.setEnabled(False)
+        self.recording_button.setEnabled(True)
+        self.recording_button.setText("Start Recording")
+        self.recording_button.setObjectName("PrimaryButton")
+        self._refresh_widget_style(self.recording_button)
         self.settings_button.setEnabled(True)
         self.capture_mic_toggle.setEnabled(True)
         self.elapsed_timer.stop()
+        self.timer_phase = "idle"
         if hasattr(self, "reprocess_button"):
             self.reprocess_button.setEnabled(True)
         if hasattr(self, "refresh_meetings_button"):
@@ -2353,7 +2411,12 @@ class MainWindow(QMainWindow):
         self.status_label.setObjectName("GreenText")
         self.status_label.setText("Ready")
         self._refresh_widget_style(self.status_label)
-        self.orb_caption.setText("Waiting to start")
+        if processing_seconds:
+            hours, remainder = divmod(processing_seconds, 3600)
+            minutes, seconds = divmod(remainder, 60)
+            self.orb_caption.setText(f"Processing completed in {hours:02}:{minutes:02}:{seconds:02}")
+        else:
+            self.orb_caption.setText("Waiting to start")
         if self.meeting_folder:
             self.log(f"Processing complete. Notes: {self.meeting_folder / 'notes.md'}")
             self._refresh_live_transcript_from_file()
@@ -2676,7 +2739,10 @@ class MainWindow(QMainWindow):
         self.meeting_store.write_metadata(folder, metadata)
         self.meeting_folder = folder
         self.metadata = metadata
-        self.start_button.setEnabled(False)
+        self.recording_button.setEnabled(False)
+        self.recording_button.setText("Processing...")
+        self.recording_button.setObjectName("DangerButton")
+        self._refresh_widget_style(self.recording_button)
         self.reprocess_button.setEnabled(False)
         self.refresh_meetings_button.setEnabled(False)
         self.open_folder_button.setEnabled(False)

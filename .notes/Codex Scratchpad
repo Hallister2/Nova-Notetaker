@@ -98,15 +98,16 @@ Current UI structure:
   - Settings
 
 - Live Capture page:
-  - Header with theme toggle and Start Recording.
+  - Header with theme toggle.
   - Meeting profile selector.
   - Note template selector.
   - Meeting status card.
   - Audio levels.
   - Mic state pill.
   - Live transcript panel.
-  - Action bar.
+  - Action bar with a single Start Recording / Stop Recording button.
   - Meeting Insights rail.
+  - Timer shows recording duration during capture, then resets and shows processing duration after stop.
 
 - Meetings page:
   - Clean table/index only.
@@ -131,6 +132,8 @@ Current UI structure:
   - Settings content now sits inside a scroll area.
   - Form controls have minimum heights so they remain readable when the window is shortened.
   - This avoids the previous behavior where fields flattened or disappeared on smaller window sizes.
+  - Settings now include compact helper text and tooltips for device selection, capture profiles, Ollama settings, WhisperLive model/language/VAD/cleanup, timeouts, and long-recording chunk size.
+  - Whisper model guidance currently names common values such as `tiny`, `base`, `small`, `medium`, and `large-v3`, with a note that actual availability depends on the WhisperLive container/config.
 
 - Meeting overview popout:
   - Rendered notes on the left.
@@ -280,6 +283,7 @@ Potential future insight improvements:
 - Consider moving Meeting Overview from a popout-only experience to a primary in-app workspace.
 - Add filtering/sorting on the Meetings table for open actions and review count.
 - Continue tightening the Ollama prompt if assignments still leak into Key Decisions in generated notes.
+- Consider adding a Settings diagnostics button later to test Ollama and WhisperLive connectivity/model availability directly.
 
 ## Communication Notes For ChatGPT / Design Team
 
