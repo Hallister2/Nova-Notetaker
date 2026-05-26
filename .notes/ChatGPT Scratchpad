@@ -1,0 +1,380 @@
+# ChatGPT Scratchpad
+
+Last updated: 2026-05-25
+
+Purpose: This is the working handoff between ChatGPT, Chad, Codex, and ongoing design/product thinking around Nova Notetaker. Keep this file current with design direction, UX decisions, workflow concerns, branding guidance, UI review notes, product recommendations, and unresolved design questions.
+
+## Current Design Perspective
+
+Nova Notetaker is evolving beyond a simple meeting recorder.
+
+The strongest emerging product identity is:
+
+- Passive AI meeting intelligence for enterprise users.
+
+Nova currently feels differentiated because it is:
+
+- Native Windows desktop software.
+- Local-first in workflow.
+- Self-hosted AI friendly.
+- Privacy-conscious.
+- Passive rather than invasive.
+
+Nova is NOT positioning itself as:
+
+- A Teams bot.
+- A cloud-only transcription SaaS.
+- Another Copilot clone.
+- A browser-first AI utility.
+
+Current architecture decisions reinforce the product identity well:
+
+- WASAPI loopback capture.
+- Optional microphone capture.
+- Self-hosted WhisperLive.
+- Self-hosted Ollama.
+- Internal infrastructure.
+- Local meeting storage.
+
+## Current Product Assessment
+
+Current overall assessment:
+
+- Product direction is strong.
+- Architecture direction is correct.
+- Branding direction is correct.
+- Information architecture is solid.
+- UI hierarchy is improving.
+- Product still visually feels closer to a polished prototype than a finished enterprise application.
+
+Current priority should shift away from major feature expansion and toward:
+
+- Cohesion.
+- Visual refinement.
+- Workflow clarity.
+- Consistency.
+- Perceived quality.
+- UX confidence.
+
+## Design Direction
+
+Current design direction is correct and should continue:
+
+- Corporate dark executive dashboard.
+- Matte surfaces.
+- Restrained orange accents.
+- Minimal glow.
+- Practical enterprise layouts.
+- Strong readability.
+- Clear visual hierarchy.
+
+The product should avoid:
+
+- Sci-fi HUD styling.
+- Excessive neon.
+- Gaming aesthetics.
+- Overly futuristic AI visuals.
+- Heavy animation.
+
+Target visual inspiration should remain closer to:
+
+- Linear.
+- GitHub Desktop.
+- Microsoft enterprise dashboards.
+- Slack admin tooling.
+- Modern productivity software.
+
+## Information Architecture Review
+
+The current sidebar structure is strong:
+
+- Live Capture
+- Meetings
+- Logs
+- Templates
+- Settings
+
+This creates clean separation between:
+
+- Active workflows.
+- Historical review.
+- Configuration.
+- System visibility.
+
+The Meetings page and Meeting Overview concepts are especially promising long-term.
+
+## Structured Insights Direction
+
+Structured insights were a major product improvement.
+
+The app shifted from:
+
+- AI-generated notes.
+
+Toward:
+
+- Actionable meeting intelligence.
+
+The most valuable outputs are:
+
+- Action items.
+- Decisions.
+- Due dates.
+- Ownership.
+- Review warnings.
+- Confidence scoring.
+
+The UI should progressively prioritize insights over raw transcript visibility.
+
+## Current UX Risks
+
+### Utility Panel Risk
+
+There is a risk the UI becomes too infrastructure-focused.
+
+Users should feel:
+
+- I captured a meeting and instantly received organized outcomes.
+
+Users should NOT feel:
+
+- I operated an AI audio processing pipeline.
+
+Implementation details such as:
+
+- Chunking.
+- Retry logic.
+- WebSocket behavior.
+- Internal processing mechanics.
+
+Should remain secondary unless troubleshooting is needed.
+
+### Transcript Dominance Risk
+
+Raw transcript panels are visually noisy.
+
+Users believe they want transcripts.
+What they actually value:
+
+- Decisions.
+- Tasks.
+- Accountability.
+- Follow-up.
+- Searchable memory.
+
+Transcript visibility should remain available but should not overpower actionable insights.
+
+### Product Sophistication vs Visual Polish
+
+The backend and product thinking are becoming increasingly sophisticated:
+
+- Structured insights.
+- Confidence scoring.
+- Reprocessing.
+- Workflow awareness.
+- Future integrations.
+
+The visual design now needs refinement to match the intelligence of the system.
+
+Areas needing continued polish:
+
+- Typography hierarchy.
+- Spacing consistency.
+- Density control.
+- Status communication.
+- Card hierarchy.
+- Window layout behavior.
+- Theme consistency.
+
+## Meeting Overview Direction
+
+The Meeting Overview experience may become the true core product surface.
+
+Reasoning:
+
+- Recording is temporary.
+- Review and follow-up create long-term value.
+- Users revisit decisions more than recordings.
+
+Long-term product direction may evolve toward:
+
+- Capture.
+- Meetings Index.
+- Meeting Workspace.
+
+Rather than treating the overview strictly as a secondary popout.
+
+Current recommendation:
+
+- Continue refining the overview window heavily.
+- Prioritize readability.
+- Prioritize workflow efficiency.
+- Keep insights highly visible.
+- Minimize clutter.
+
+## Branding Notes
+
+Orange is the correct brand accent.
+
+However:
+
+- Orange should remain restrained.
+- Orange should communicate focus and action.
+- Large orange surfaces should be avoided.
+
+Orange is best used for:
+
+- Active states.
+- Recording indicators.
+- Focus highlights.
+- Buttons.
+- Selected states.
+- Minimal brand accents.
+
+Core surfaces should remain:
+
+- Charcoal.
+- Graphite.
+- Matte dark gray.
+- Soft off-black.
+
+Typography should remain:
+
+- Neutral.
+- Highly readable.
+- Slightly warm white.
+- Low eye strain.
+
+## Nova Orb Guidance
+
+The Nova orb should remain subtle.
+
+It should feel like:
+
+- Ambient identity.
+- Calm intelligence.
+- Soft system presence.
+
+It should NOT feel like:
+
+- Jarvis.
+- Cortana.
+- A glowing reactor.
+- A cyberpunk assistant.
+
+Recommendations:
+
+- Small scale.
+- Minimal animation.
+- Restrained glow.
+- Elegant motion.
+- Soft movement only.
+
+Reference feeling:
+
+- Luxury automotive UI.
+- Calm enterprise AI.
+- Ambient premium software.
+
+## Theme Guidance
+
+Current implemented themes:
+
+- Executive Dark.
+- Clean Professional.
+- Modern Gradient.
+
+Current recommendation:
+
+- Executive Dark should remain the flagship experience.
+- Light theme should prioritize all-day usability.
+- Gradient theme should remain business-safe and restrained.
+
+Design watch areas:
+
+- Markdown readability.
+- Badge contrast.
+- Disabled control visibility.
+- Table readability.
+- High DPI scaling.
+- Laptop readability.
+
+## Priority Design Improvements
+
+Highest current design priorities:
+
+- Improve typography hierarchy.
+- Reduce visual noise.
+- Improve whitespace balance.
+- Make insights feel like the primary value.
+- Simplify status communication.
+- Improve screenshot-readiness.
+- Refine Meeting Overview polish.
+- Refine Light and Gradient themes.
+
+## UX Philosophy
+
+Nova should feel:
+
+- Calm.
+- Reliable.
+- Intelligent.
+- Quietly powerful.
+- Enterprise-safe.
+- Focused.
+- Fast.
+
+The UI should communicate confidence without feeling experimental.
+
+## Screen Testing Guidance
+
+UI decisions should continue being validated against:
+
+- 1366x768 laptops.
+- High DPI scaling.
+- Multi-monitor environments.
+- Enterprise office hardware.
+- Conference room displays.
+
+Enterprise polish is heavily influenced by:
+
+- Layout stability.
+- Readability.
+- Window scaling.
+- Information density.
+- Predictable interactions.
+
+## Future Product Opportunities
+
+Potential future opportunities:
+
+- Meeting quality scoring.
+- Follow-up reminders.
+- Calendar export approval workflows.
+- Outlook integration.
+- n8n workflow automation.
+- Searchable meeting intelligence.
+- Cross-meeting aggregation.
+- Action-item dashboards.
+- Team/project tagging.
+- Executive summary templates.
+- Technical review templates.
+
+## Communication Notes For Codex / Engineering
+
+When implementing UI changes, prioritize:
+
+- Readability first.
+- Consistent spacing.
+- Predictable interaction behavior.
+- Minimal visual clutter.
+- Calm enterprise presentation.
+- Screenshot-tested layouts.
+
+When implementing workflow changes, prioritize:
+
+- Clarity of meeting state.
+- Confidence in recording/transcription state.
+- Fast review workflows.
+- Easy action-item visibility.
+- Long-term meeting usability.
