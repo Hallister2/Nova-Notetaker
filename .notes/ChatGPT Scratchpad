@@ -48,6 +48,18 @@ Current overall assessment:
 - Product already feels substantially more polished than a prototype.
 - Dark mode is approaching believable enterprise software quality.
 
+Implemented since the last design review:
+
+- Human-readable Meetings status badges.
+- Calendar approval/edit workflow before `.ics` export.
+- Cross-meeting Actions tab inside the Calendar workspace.
+- In-app Meeting Overview workspace alongside the popout.
+- Passive speaker rename aliases for transcript display.
+- Settings diagnostics/preflight controls.
+- Template/profile duplicate and preview controls.
+- Lightweight meeting index foundation.
+- Layout constraint pass across Meetings, Calendar, Actions, Search, and Settings.
+
 Current priority should shift away from major feature expansion and toward:
 
 - Cohesion.
@@ -683,32 +695,24 @@ Reference feeling:
 Highest current design priorities:
 
 1. Live Capture layout redesign.
-2. Meeting status/badge system.
-3. Typography hierarchy cleanup.
-4. Form density reduction.
-5. Insight card redesign.
-6. Unified spacing system.
-7. Responsive scaling polish.
-8. Optional compact mode.
+2. Typography hierarchy cleanup.
+3. Insight card redesign.
+4. Unified spacing system.
+5. Responsive scaling polish.
+6. Optional compact mode.
 
 Additional recommended priorities:
 
-- Add quality/status badges to Meetings.
 - Improve perceived responsiveness.
 - Add loading/skeleton states.
 - Add smoother transitions.
-- Improve empty states.
 - Reduce visible infrastructure complexity.
 
 ## Design System Recommendation
 
 The project is reaching the point where a formal design system is recommended.
 
-Suggested future document:
-
-- .notes/UI Design System
-
-Potential areas to standardize:
+Design system exists at `.notes/UI Design System`. Potential areas to keep refining:
 
 - Typography scale.
 - Spacing scale.
@@ -771,12 +775,9 @@ Potential future opportunities:
 
 - Meeting quality scoring.
 - Follow-up reminders.
-- Calendar export approval workflows.
 - Outlook integration.
 - n8n workflow automation.
-- Searchable meeting intelligence.
 - Cross-meeting aggregation.
-- Action-item dashboards.
 - Team/project tagging.
 - Executive summary templates.
 - Technical review templates.

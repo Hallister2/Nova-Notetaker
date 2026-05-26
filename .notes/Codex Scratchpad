@@ -17,7 +17,8 @@ Current core flow:
 - Generate notes through self-hosted Ollama.
 - Write `notes.md`, `transcript.md`, `metadata.json`, and now `insights.json`.
 - Review saved meetings from the Meetings tab.
-- Open a selected meeting in a separate overview window.
+- Review follow-up dates and action items from the Calendar workspace.
+- Open a selected meeting either in the in-app workspace or in a separate popout overview.
 
 Current infrastructure assumptions:
 
@@ -104,6 +105,8 @@ Current UI structure:
 - Left sidebar navigation:
   - Live Capture
   - Meetings
+  - Search
+  - Calendar
   - Logs
   - Templates
   - Settings
@@ -122,9 +125,21 @@ Current UI structure:
 
 - Meetings page:
   - Clean table/index only.
-  - Date, time, meeting name, status, open action count, review count, and Open meeting action.
+  - Date, time, meeting name, status, open action count, review count, Open popout action, and Workspace action.
   - Selected meetings can be deleted.
-  - Opening a meeting launches a separate overview window.
+  - Batch reprocess and exports are available for selected meetings.
+
+- Search page:
+  - Searches meeting titles, notes, transcripts, owners, and dates.
+  - Search results open meetings in the in-app workspace.
+
+- Calendar page:
+  - Dates tab reviews detected calendar candidates by meeting.
+  - Calendar candidates have an `Approved` checkbox.
+  - Date/context cells are editable and saved to per-meeting `calendar_review.json`.
+  - Export visible dates exports approved candidates only.
+  - Actions tab lists cross-meeting action items with owner/status/confidence filters.
+  - Action status can be updated directly from the table.
 
 - Templates page:
   - Split into two vertical sections:
@@ -151,6 +166,12 @@ Current UI structure:
   - Details and structured insights on the right.
   - Popout windows close when the main app closes.
   - Popouts are screen-aware and should stay inside the available display.
+
+- Meeting overview workspace:
+  - In-app workspace page exists in the main stack.
+  - Meetings can open into the workspace from Meetings, Search, Calendar/Actions, or Open latest.
+  - Workspace includes Structured notes, Transcript, and Details tabs.
+  - Speaker aliases can be edited through Rename Speakers and are applied to transcript display without rewriting `transcript.md`.
 
 ## Theme System
 
@@ -204,19 +225,20 @@ Source was removed from visible notes and insight cards because it added clutter
 Current action state:
 
 - Structured action items default to `open`.
-- Meeting Overview action cards now include a status selector:
+- Meeting Overview and Calendar > Actions include status selectors:
   - open
   - in progress
   - done
   - deferred
+  - closed
 - Status changes are saved back to `insights.json`.
+- Actions older than `review.action_auto_close_days` are automatically marked `closed`.
+- `review.action_auto_close_days` defaults to 30 and can be set to 0 to disable auto-close.
 
 Potential future insight improvements:
 
-- Add filters for Low Confidence, Unknown Owner, Unknown Due Date.
-- Add a compact “Needs review” count on the Meetings table.
 - Add click-to-jump from insight item to the relevant note section.
-- Eventually add calendar export through Outlook or n8n.
+- Add deeper Outlook/n8n/Planner integration after local review workflows stabilize.
 
 ## Known Issues / Watch Items
 
@@ -230,6 +252,7 @@ Potential future insight improvements:
 
 - True speaker diarization is not solved.
   - Current minimum reliable distinction is `You` versus `Meeting/System Audio`.
+  - Passive speaker rename aliases are implemented, but Nova does not yet split meeting audio into true speaker segments.
 
 - Meeting overview layout is improving but should keep being screenshot-tested.
   - Especially on laptop screens, high Windows scaling, and multi-monitor setups.
@@ -240,9 +263,8 @@ Potential future insight improvements:
 
 ## Open Product / Design Questions
 
-- Should the Meeting Overview be a popout window, a full page inside the app, or both?
 - Should the app show live partial transcript while recording, or only after processing?
-- Should insights appear only after processing, or should we show “capture/transcription state” cards while recording?
+- Should insights appear only after processing, or should we show â€œcapture/transcription stateâ€ cards while recording?
 - What is the right visual weight for the Nova orb?
   - Current orb is brand/status flavor.
   - It should not overpower the business dashboard.
@@ -251,50 +273,43 @@ Potential future insight improvements:
   - Local-only is simpler.
   - n8n/Outlook/Planner integration would make it more useful.
 
-- Should calendar extraction create real events automatically, or require user approval?
-  - Recommendation: always require review/approval before calendar creation.
-
 - Should `Source` be fully removed from generated notes, or kept in `insights.json` only?
   - Current decision: hidden from UI and new notes, but still supported in parser for older notes.
 
 - What should Templates become next?
   - MVP now supports custom templates.
-  - Possible next step: template preview, duplicate template, import/export template packs, and per-template insight-card preferences.
+  - Possible next step: import/export template packs and per-template insight-card preferences.
   - Need design guidance on whether Templates should feel like a simple form or a richer "prompt studio" later.
 
 ## Next Useful Implementation Ideas
 
-- Add a small “Reprocess selected” batch mode for multiple meetings.
-- Add an “Open latest meeting” quick action on Live Capture.
-- Add quality badges to the Meetings table:
-  - Processed
-  - Warnings
-  - Needs review
-  - No transcript
-
 - Add an `insights.json` backfill command for old meetings.
 - Remove unused legacy UI code from `main_window.py`.
 - Add screenshot-based UI QA notes for the three themes.
-- Add calendar export placeholder wiring through n8n or Outlook later.
-- Add duplicate/import/export for meeting profiles and note templates.
+- Add Outlook/n8n/Planner integration for approved calendar/action items.
+- Add import/export for meeting profiles and note templates.
+- Continue splitting `main_window.py` into page/component modules.
 
 ## Last Verified State
 
 - Last code verification: 2026-05-26.
-- Full test suite passed after the Ollama format-retry guardrail:
-  - 25 tests OK.
-- Most recent bug fixed:
-  - Notes-only reprocess accepts transcripts where one source is pending but another source contains real text.
-  - Stale `insights.json` is rebuilt when notes are newer.
-  - Action statuses survive insight rebuilds when the action still matches.
+- Full test discovery passed after the layout constraint pass:
+  - 32 tests OK.
+- Latest UI smoke check:
+  - Offscreen geometry check at 780x560, 1024x680, and 1366x768 found 0 visible child-boundary violations.
+- Most recent feature batch:
+  - Calendar approval/edit workflow.
+  - In-app meeting overview workspace.
+  - Passive speaker rename aliases.
+  - Actions folded under Calendar.
+  - Layout constraint pass for Meetings, Calendar, Actions, Search, and Settings.
 
 ## Current Next Recommendations
 
-- Screenshot-review the Meeting Overview after the new action status controls.
-- Consider moving Meeting Overview from a popout-only experience to a primary in-app workspace.
-- Add filtering/sorting on the Meetings table for open actions and review count.
+- Screenshot-review the updated Calendar/Actions workspace and in-app Meeting Overview at real Windows scaling.
 - Continue tightening the Ollama prompt if assignments still leak into Key Decisions in generated notes.
-- Consider adding a Settings diagnostics button later to test Ollama and WhisperLive connectivity/model availability directly.
+- Implement true near-realtime WhisperLive transcript streaming as the next major functional milestone.
+- Continue decomposing `main_window.py`; `app/ui/review_helpers.py` is only the first extraction.
 
 ## 2026-05-26 Update - Latest Reprocess Review
 
@@ -568,3 +583,4 @@ Remaining roadmap items:
   - Offscreen geometry smoke check at 780x560, 1024x680, and 1366x768 found 0 visible child-boundary violations.
   - `py_compile` passed for changed UI files.
   - Full test discovery passed: 32 tests OK.
+
