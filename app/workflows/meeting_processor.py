@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 from app.audio.audio_validation import inspect_wav
+from app.core.profiles import MeetingProfile
+from app.core.templates import NoteTemplate
 from app.core.settings import load_settings
 from app.intelligence.insights import build_insights_from_notes, write_insights_json
 from app.intelligence.ollama_client import OllamaClient
@@ -65,7 +67,8 @@ class MeetingProcessor:
         if mode == "notes_only" and transcript_path.exists():
             on_status("Using existing transcript")
             transcript_text = transcript_path.read_text(encoding="utf-8")
-            has_transcript = "_Transcript pending._" not in transcript_text
+            transcript_text = self._usable_existing_transcript_text(transcript_text)
+            has_transcript = bool(transcript_text.strip())
         else:
             on_status("Preparing transcript")
             transcriber = WhisperLiveClient(settings)
@@ -108,7 +111,10 @@ class MeetingProcessor:
             notes_path = self.meeting_store.write_notes_stub(folder, metadata, transcript_path, warnings)
         elif settings.get("ai", {}).get("provider", "ollama") == "ollama":
             on_status("Generating notes with Ollama")
-            notes_result = OllamaClient(settings).generate_meeting_notes(transcript_text)
+            notes_result = OllamaClient(settings).generate_meeting_notes(
+                transcript_text,
+                profile_context=self._profile_prompt_context(metadata),
+            )
             if notes_result.success:
                 notes_path = self.meeting_store.write_notes(folder, metadata, notes_result.text, transcript_path, warnings)
             else:
@@ -151,3 +157,48 @@ class MeetingProcessor:
             lines.append("")
 
         return "\n".join(lines)
+
+    @staticmethod
+    def _usable_existing_transcript_text(transcript_text: str) -> str:
+        lines: list[str] = []
+        in_warnings = False
+        for raw_line in transcript_text.splitlines():
+            line = raw_line.strip()
+            if line.lower() == "## processing warnings":
+                in_warnings = True
+                continue
+            if in_warnings and line.startswith("## "):
+                in_warnings = False
+            if in_warnings:
+                continue
+            if not line:
+                continue
+            if line in {"# Transcript", "_Transcript pending._"}:
+                continue
+            lines.append(raw_line)
+        return "\n".join(lines).strip()
+
+    @staticmethod
+    def _profile_prompt_context(metadata: MeetingMetadata) -> str:
+        profile_data = metadata.meeting_profile if isinstance(metadata.meeting_profile, dict) else {}
+        template_data = metadata.note_template if isinstance(metadata.note_template, dict) else {}
+        contexts = []
+        if profile_data:
+            try:
+                contexts.append(
+                    MeetingProfile(
+                        **{key: value for key, value in profile_data.items() if key in MeetingProfile.__dataclass_fields__}
+                    ).to_prompt_context()
+                )
+            except Exception:
+                contexts.append("\n".join(f"{key}: {value}" for key, value in profile_data.items() if value))
+        if template_data:
+            try:
+                contexts.append(
+                    NoteTemplate(
+                        **{key: value for key, value in template_data.items() if key in NoteTemplate.__dataclass_fields__}
+                    ).to_prompt_context()
+                )
+            except Exception:
+                contexts.append("\n".join(f"{key}: {value}" for key, value in template_data.items() if value))
+        return "\n\n".join(context for context in contexts if context)

@@ -49,6 +49,28 @@ Current infrastructure assumptions:
   - `insights.json` is generated for newly processed/reprocessed meetings.
   - Existing meetings without `insights.json` can still be parsed from `notes.md`.
 
+- Meeting profiles are implemented and editable.
+  - Profiles live in `config/profiles.json`.
+  - Live Capture has a profile selector.
+  - Selected profile data is written into meeting metadata.
+  - Ollama receives profile context during note generation.
+  - The Templates page includes a Meeting Profiles editor with create, edit, save, and delete workflows.
+  - Reprocess now lets the user override the meeting profile before regenerating notes or doing a full reprocess.
+
+- Note templates are implemented as an MVP.
+  - Templates live in `config/templates.json`.
+  - Live Capture has a template selector under the meeting profile selector.
+  - The Templates tab now supports create, edit, save, and delete workflows.
+  - Selected template data is written into meeting metadata.
+  - Ollama receives template context during note generation.
+  - Templates are for output style and structure; profiles are for meeting/company context.
+  - Reprocess now lets the user override the note template before regenerating notes or doing a full reprocess.
+
+- Reprocess transcript handling was fixed.
+  - System-audio-only meetings often have `## You` marked as `_Transcript pending._`.
+  - Notes-only reprocess now ignores pending sections and processing warnings, then uses any real transcript text that remains.
+  - This prevents valid meeting-audio transcripts from being replaced by the "pending transcription" notes stub.
+
 ## UI / Design Direction
 
 The current design direction is a corporate dark executive dashboard, not a sci-fi HUD.
@@ -72,6 +94,8 @@ Current UI structure:
 
 - Live Capture page:
   - Header with theme toggle and Start Recording.
+  - Meeting profile selector.
+  - Note template selector.
   - Meeting status card.
   - Audio levels.
   - Mic state pill.
@@ -84,6 +108,24 @@ Current UI structure:
   - Date, time, meeting name, status, and Open meeting action.
   - Selected meetings can be deleted.
   - Opening a meeting launches a separate overview window.
+
+- Templates page:
+  - Split into two vertical sections:
+    - Meeting profiles on top.
+    - Note templates below.
+  - Meeting profiles edit name, category, company context, title prefix, AI context, and notes focus.
+  - Note templates edit name, category, description, preferred sections, notes focus, and custom instructions.
+  - New/save/delete changes are saved locally and reflected in the Live Capture selectors.
+  - Layout was tightened after screenshot review:
+    - Inner section headings are smaller.
+    - Child panels use transparent backgrounds to avoid harsh black blocks.
+    - Tables and text fields use more compact heights.
+    - On compact/narrow windows, each section stacks the table above its editor.
+
+- Settings page:
+  - Settings content now sits inside a scroll area.
+  - Form controls have minimum heights so they remain readable when the window is shortened.
+  - This avoids the previous behavior where fields flattened or disappeared on smaller window sizes.
 
 - Meeting overview popout:
   - Rendered notes on the left.
@@ -193,8 +235,10 @@ Potential future insight improvements:
 - Should `Source` be fully removed from generated notes, or kept in `insights.json` only?
   - Current decision: hidden from UI and new notes, but still supported in parser for older notes.
 
-- What should Templates become?
-  - Possible direction: note style presets such as Executive Summary, Technical Standup, Project Sync, Sales Call, Incident Review.
+- What should Templates become next?
+  - MVP now supports custom templates.
+  - Possible next step: template preview, duplicate template, import/export template packs, and per-template insight-card preferences.
+  - Need design guidance on whether Templates should feel like a simple form or a richer "prompt studio" later.
 
 ## Next Useful Implementation Ideas
 
@@ -210,6 +254,17 @@ Potential future insight improvements:
 - Remove unused legacy UI code from `main_window.py`.
 - Add screenshot-based UI QA notes for the three themes.
 - Add calendar export placeholder wiring through n8n or Outlook later.
+- Add duplicate/import/export for meeting profiles and note templates.
+
+## Last Verified State
+
+- Last code verification: 2026-05-25.
+- `app/ui/main_window.py` compiled after the Reprocess profile/template changes.
+- Full test suite passed after the transcript reprocess fix:
+  - 19 tests OK.
+- Most recent bug fixed:
+  - Notes-only reprocess now accepts transcripts where one source is pending but another source contains real text.
+  - This matters for mic-muted/system-audio-only recordings.
 
 ## Communication Notes For ChatGPT / Design Team
 
@@ -227,4 +282,3 @@ When giving product feedback, focus on:
 - How confidently the app communicates recording/transcription status.
 - How users review and act on previous meetings.
 - Whether the overview popout or an in-app overview page is the better long-term design.
-

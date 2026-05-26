@@ -1,0 +1,38 @@
+[
+  {
+    "id": "standard",
+    "name": "Standard Meeting Notes",
+    "category": "General",
+    "description": "Balanced notes for most meetings.",
+    "notes_focus": "Capture summary, decisions, action items, dates, risks, and follow-ups.",
+    "custom_instructions": "",
+    "preferred_sections": "Summary, Key Decisions, Action Items, Important Dates, Risks / Blockers, Follow-ups"
+  },
+  {
+    "id": "executive_summary",
+    "name": "Executive Summary",
+    "category": "Executive",
+    "description": "Concise high-signal notes for leadership review.",
+    "notes_focus": "Prioritize outcomes, decisions, risks, deadlines, and owner accountability.",
+    "custom_instructions": "Keep wording concise and avoid transcript-like detail.",
+    "preferred_sections": "Summary, Key Decisions, Action Items, Important Dates, Risks / Blockers, Follow-ups"
+  },
+  {
+    "id": "project_sync",
+    "name": "Project Sync",
+    "category": "Project",
+    "description": "Project meeting notes with emphasis on delivery and blockers.",
+    "notes_focus": "Prioritize blockers, dependencies, owners, due dates, decisions, and next steps.",
+    "custom_instructions": "",
+    "preferred_sections": "Summary, Key Decisions, Action Items, Important Dates, Risks / Blockers, Follow-ups"
+  },
+  {
+    "id": "vendor_call",
+    "name": "Vendor Call",
+    "category": "Vendor",
+    "description": "Notes for outside vendor or partner meetings.",
+    "notes_focus": "Prioritize commitments, open questions, commercial risks, dates, and accountability.",
+    "custom_instructions": "",
+    "preferred_sections": "Summary, Key Decisions, Action Items, Important Dates, Risks / Blockers, Follow-ups"
+  }
+]

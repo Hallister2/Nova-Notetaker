@@ -12,6 +12,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "app": {
         "name": "Nova Notetaker",
         "theme": "executive_dark",
+        "selected_profile_id": "general",
+        "selected_template_id": "standard",
     },
     "audio": {
         "mic_device_name": "",

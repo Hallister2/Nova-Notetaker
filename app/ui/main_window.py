@@ -41,7 +41,9 @@ from PySide6.QtWidgets import (
 
 from app.audio.capture_service import CaptureConfig, CaptureService
 from app.audio.device_manager import AudioDevice, AudioDeviceManager
+from app.core.profiles import MeetingProfile, ProfileStore
 from app.core.settings import load_settings, save_settings
+from app.core.templates import NoteTemplate, TemplateStore
 from app.intelligence.insights import InsightItem, MeetingInsights, load_or_build_insights
 from app.storage.meeting_store import MeetingMetadata, MeetingStore
 from app.ui.orb_widget import OrbWidget
@@ -181,15 +183,40 @@ class SettingsDialog(QDialog):
 
 
 class ReprocessDialog(QDialog):
-    def __init__(self, parent: QWidget) -> None:
+    def __init__(
+        self,
+        parent: QWidget,
+        profiles: list[MeetingProfile],
+        templates: list[NoteTemplate],
+        current_profile_id: str,
+        current_template_id: str,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Reprocess Meeting")
+        self.setMinimumWidth(520)
         layout = QVBoxLayout(self)
         self.notes_only = QRadioButton("Regenerate notes only")
         self.notes_only.setChecked(True)
         self.full = QRadioButton("Full reprocess: transcribe audio and regenerate notes")
         layout.addWidget(self.notes_only)
         layout.addWidget(self.full)
+
+        form = QFormLayout()
+        form.setHorizontalSpacing(14)
+        form.setVerticalSpacing(10)
+        self.profile_combo = QComboBox()
+        for profile in profiles:
+            self.profile_combo.addItem(f"{profile.name} ({profile.category})", profile.id)
+        select_combo_by_data(self.profile_combo, current_profile_id)
+
+        self.template_combo = QComboBox()
+        for template in templates:
+            self.template_combo.addItem(f"{template.name} ({template.category})", template.id)
+        select_combo_by_data(self.template_combo, current_template_id)
+        form.addRow("Meeting profile", self.profile_combo)
+        form.addRow("Note template", self.template_combo)
+        layout.addLayout(form)
+
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -198,6 +225,14 @@ class ReprocessDialog(QDialog):
     @property
     def mode(self) -> str:
         return "full" if self.full.isChecked() else "notes_only"
+
+    @property
+    def profile_id(self) -> str:
+        return str(self.profile_combo.currentData() or "")
+
+    @property
+    def template_id(self) -> str:
+        return str(self.template_combo.currentData() or "")
 
 
 class CaptureWorker(QObject):
@@ -249,6 +284,10 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.settings = load_settings()
+        self.profile_store = ProfileStore()
+        self.meeting_profiles = self.profile_store.list_profiles()
+        self.template_store = TemplateStore()
+        self.note_templates = self.template_store.list_templates()
         self.device_manager = AudioDeviceManager()
         self.meeting_store = MeetingStore()
         self.meeting_folder: Path | None = None
@@ -424,6 +463,70 @@ class MainWindow(QMainWindow):
         self._sync_theme_buttons()
         return container
 
+    def _populate_profile_combo(self) -> None:
+        self.profile_combo.blockSignals(True)
+        self.profile_combo.clear()
+        selected_id = self.settings.get("app", {}).get("selected_profile_id", "general")
+        for profile in self.meeting_profiles:
+            self.profile_combo.addItem(f"{profile.name} ({profile.category})", profile.id)
+        select_combo_by_data(self.profile_combo, selected_id)
+        self.profile_combo.blockSignals(False)
+
+    def _profile_selection_changed(self) -> None:
+        profile = self._selected_meeting_profile()
+        self.settings.setdefault("app", {})["selected_profile_id"] = profile.id
+        save_settings(self.settings)
+        self.update_settings_summary()
+
+    def _selected_meeting_profile(self) -> MeetingProfile:
+        profile_id = str(self.profile_combo.currentData() or self.settings.get("app", {}).get("selected_profile_id", "general"))
+        return self.profile_store.get_profile(profile_id)
+
+    def _populate_template_combo(self) -> None:
+        self.template_combo.blockSignals(True)
+        self.template_combo.clear()
+        selected_id = self.settings.get("app", {}).get("selected_template_id", "standard")
+        self.note_templates = self.template_store.list_templates()
+        for template in self.note_templates:
+            self.template_combo.addItem(f"{template.name} ({template.category})", template.id)
+        select_combo_by_data(self.template_combo, selected_id)
+        self.template_combo.blockSignals(False)
+
+    def _template_selection_changed(self) -> None:
+        template = self._selected_note_template()
+        self.settings.setdefault("app", {})["selected_template_id"] = template.id
+        save_settings(self.settings)
+        self.update_settings_summary()
+
+    def _selected_note_template(self) -> NoteTemplate:
+        template_id = str(self.template_combo.currentData() or self.settings.get("app", {}).get("selected_template_id", "standard"))
+        return self.template_store.get_template(template_id)
+
+    @staticmethod
+    def _profile_metadata(profile: MeetingProfile) -> dict[str, str]:
+        return {
+            "id": profile.id,
+            "name": profile.name,
+            "category": profile.category,
+            "company_conducting": profile.company_conducting,
+            "companies_attending": profile.companies_attending,
+            "default_meeting_title_prefix": profile.default_meeting_title_prefix,
+            "ai_context": profile.ai_context,
+            "notes_focus": profile.notes_focus,
+        }
+
+    @staticmethod
+    def _template_metadata(template: NoteTemplate) -> dict[str, str]:
+        return {
+            "id": template.id,
+            "name": template.name,
+            "category": template.category,
+            "description": template.description,
+            "notes_focus": template.notes_focus,
+            "custom_instructions": template.custom_instructions,
+            "preferred_sections": template.preferred_sections,
+        }
+
     def _build_meeting_status_card(self) -> QFrame:
         card = QFrame()
         card.setObjectName("Panel")
@@ -441,7 +544,17 @@ class MainWindow(QMainWindow):
         title_stack = QVBoxLayout()
         title_stack.setSpacing(8)
         self.meeting_title.setMinimumWidth(360)
+        self.profile_combo = QComboBox()
+        self._populate_profile_combo()
+        self.profile_combo.currentIndexChanged.connect(self._profile_selection_changed)
+        self.template_combo = QComboBox()
+        self._populate_template_combo()
+        self.template_combo.currentIndexChanged.connect(self._template_selection_changed)
         title_stack.addWidget(self.meeting_title)
+        title_stack.addWidget(self._muted_label("Meeting profile"))
+        title_stack.addWidget(self.profile_combo)
+        title_stack.addWidget(self._muted_label("Note template"))
+        title_stack.addWidget(self.template_combo)
         title_stack.addWidget(self.detect_title_button, alignment=Qt.AlignLeft)
 
         self.status_label = QLabel("Ready")
@@ -674,14 +787,469 @@ class MainWindow(QMainWindow):
         return page
 
     def _build_templates_page(self) -> QWidget:
-        return self._placeholder_page("Templates", "Meeting note templates are queued for a future pass.")
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        self.templates_page_layout = layout
+        layout.setContentsMargins(34, 28, 18, 28)
+        layout.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        self.templates_content_layout = content_layout
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(14)
+
+        title = QLabel("Templates")
+        title.setObjectName("Title")
+        content_layout.addWidget(title)
+        content_layout.addWidget(self._muted_label("Edit meeting profiles for context and note templates for output style."))
+
+        content_layout.addWidget(self._build_meeting_profiles_section())
+        content_layout.addWidget(self._build_note_templates_section())
+        content_layout.addStretch()
+
+        scroll.setWidget(content)
+        layout.addWidget(scroll)
+        self.active_profile_id = ""
+        self.active_template_id = ""
+        self.refresh_profiles_table()
+        self.refresh_templates_table()
+        return page
+
+    def _build_meeting_profiles_section(self) -> QFrame:
+        section = QFrame()
+        section.setObjectName("Panel")
+        layout = QGridLayout(section)
+        self.profile_section_layout = layout
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(14)
+
+        list_panel = QWidget()
+        self.profile_list_panel = list_panel
+        list_panel.setObjectName("Transparent")
+        list_layout = QVBoxLayout(list_panel)
+        list_layout.setContentsMargins(0, 0, 0, 0)
+        list_layout.setSpacing(8)
+        title = QLabel("Meeting profiles")
+        title.setObjectName("PanelTitle")
+        list_layout.addWidget(title)
+        list_layout.addWidget(self._muted_label("Profiles tell Nova what kind of meeting this is and what context matters."))
+
+        self.profiles_table = QTableWidget(0, 2)
+        self.profiles_table.setHorizontalHeaderLabels(["Profile", "Category"])
+        self.profiles_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.profiles_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.profiles_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.profiles_table.verticalHeader().setVisible(False)
+        self.profiles_table.horizontalHeader().setStretchLastSection(True)
+        self.profiles_table.setMinimumHeight(125)
+        self.profiles_table.itemSelectionChanged.connect(self._profile_row_selected)
+        list_layout.addWidget(self.profiles_table, stretch=1)
+
+        list_buttons = QHBoxLayout()
+        self.new_profile_button = QPushButton("New profile")
+        self.new_profile_button.clicked.connect(self.new_profile)
+        self.delete_profile_button = QPushButton("Delete")
+        self.delete_profile_button.clicked.connect(self.delete_profile)
+        list_buttons.addWidget(self.new_profile_button)
+        list_buttons.addWidget(self.delete_profile_button)
+        list_layout.addLayout(list_buttons)
+
+        editor_panel = QWidget()
+        self.profile_editor_panel = editor_panel
+        editor_panel.setObjectName("Transparent")
+        editor_layout = QVBoxLayout(editor_panel)
+        editor_layout.setContentsMargins(0, 0, 0, 0)
+        editor_layout.setSpacing(8)
+        editor_title = QLabel("Profile editor")
+        editor_title.setObjectName("SectionTitle")
+        editor_layout.addWidget(editor_title)
+
+        form = QFormLayout()
+        form.setHorizontalSpacing(14)
+        form.setVerticalSpacing(7)
+        self.profile_name_edit = QLineEdit()
+        self.profile_category_edit = QLineEdit()
+        self.profile_company_conducting_edit = QLineEdit()
+        self.profile_companies_attending_edit = QLineEdit()
+        self.profile_title_prefix_edit = QLineEdit()
+        self.profile_context_edit = QTextEdit()
+        self.profile_context_edit.setMaximumHeight(74)
+        self.profile_focus_edit = QTextEdit()
+        self.profile_focus_edit.setMaximumHeight(74)
+        form.addRow("Name", self.profile_name_edit)
+        form.addRow("Category", self.profile_category_edit)
+        form.addRow("Company conducting", self.profile_company_conducting_edit)
+        form.addRow("Companies attending", self.profile_companies_attending_edit)
+        form.addRow("Title prefix", self.profile_title_prefix_edit)
+        form.addRow("AI context", self.profile_context_edit)
+        form.addRow("Notes focus", self.profile_focus_edit)
+        editor_layout.addLayout(form)
+
+        save_row = QHBoxLayout()
+        self.save_profile_button = QPushButton("Save profile")
+        self.save_profile_button.setObjectName("PrimaryButton")
+        self.save_profile_button.clicked.connect(self.save_profile)
+        save_row.addStretch()
+        save_row.addWidget(self.save_profile_button)
+        editor_layout.addLayout(save_row)
+
+        layout.addWidget(list_panel, 0, 0)
+        layout.addWidget(editor_panel, 0, 1)
+        layout.setColumnStretch(0, 1)
+        layout.setColumnStretch(1, 2)
+        return section
+
+    def _build_note_templates_section(self) -> QFrame:
+        section = QFrame()
+        section.setObjectName("Panel")
+        layout = QGridLayout(section)
+        self.template_section_layout = layout
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(14)
+
+        list_panel = QWidget()
+        self.template_list_panel = list_panel
+        list_panel.setObjectName("Transparent")
+        list_layout = QVBoxLayout(list_panel)
+        list_layout.setContentsMargins(0, 0, 0, 0)
+        list_layout.setSpacing(8)
+        title = QLabel("Note templates")
+        title.setObjectName("PanelTitle")
+        list_layout.addWidget(title)
+        list_layout.addWidget(self._muted_label("Templates control the generated notes structure, tone, and preferred sections."))
+
+        self.templates_table = QTableWidget(0, 2)
+        self.templates_table.setHorizontalHeaderLabels(["Template", "Category"])
+        self.templates_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.templates_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.templates_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.templates_table.verticalHeader().setVisible(False)
+        self.templates_table.horizontalHeader().setStretchLastSection(True)
+        self.templates_table.setMinimumHeight(125)
+        self.templates_table.itemSelectionChanged.connect(self._template_row_selected)
+        list_layout.addWidget(self.templates_table, stretch=1)
+
+        list_buttons = QHBoxLayout()
+        self.new_template_button = QPushButton("New template")
+        self.new_template_button.clicked.connect(self.new_template)
+        self.delete_template_button = QPushButton("Delete")
+        self.delete_template_button.clicked.connect(self.delete_template)
+        list_buttons.addWidget(self.new_template_button)
+        list_buttons.addWidget(self.delete_template_button)
+        list_layout.addLayout(list_buttons)
+
+        editor_panel = QWidget()
+        self.template_editor_panel = editor_panel
+        editor_panel.setObjectName("Transparent")
+        editor_layout = QVBoxLayout(editor_panel)
+        editor_layout.setContentsMargins(0, 0, 0, 0)
+        editor_layout.setSpacing(8)
+        editor_title = QLabel("Template editor")
+        editor_title.setObjectName("SectionTitle")
+        editor_layout.addWidget(editor_title)
+
+        form = QFormLayout()
+        form.setHorizontalSpacing(14)
+        form.setVerticalSpacing(7)
+        self.template_name_edit = QLineEdit()
+        self.template_category_edit = QLineEdit()
+        self.template_description_edit = QLineEdit()
+        self.template_sections_edit = QLineEdit()
+        self.template_focus_edit = QTextEdit()
+        self.template_focus_edit.setMaximumHeight(72)
+        self.template_custom_edit = QTextEdit()
+        self.template_custom_edit.setMaximumHeight(86)
+        form.addRow("Name", self.template_name_edit)
+        form.addRow("Category", self.template_category_edit)
+        form.addRow("Description", self.template_description_edit)
+        form.addRow("Preferred sections", self.template_sections_edit)
+        form.addRow("Notes focus", self.template_focus_edit)
+        form.addRow("Custom instructions", self.template_custom_edit)
+        editor_layout.addLayout(form)
+
+        save_row = QHBoxLayout()
+        self.save_template_button = QPushButton("Save template")
+        self.save_template_button.setObjectName("PrimaryButton")
+        self.save_template_button.clicked.connect(self.save_template)
+        save_row.addStretch()
+        save_row.addWidget(self.save_template_button)
+        editor_layout.addLayout(save_row)
+
+        layout.addWidget(list_panel, 0, 0)
+        layout.addWidget(editor_panel, 0, 1)
+        layout.setColumnStretch(0, 1)
+        layout.setColumnStretch(1, 2)
+        return section
+
+    def refresh_profiles_table(self, selected_id: str | None = None) -> None:
+        self.meeting_profiles = self.profile_store.list_profiles()
+        target_id = selected_id or self.active_profile_id or self.settings.get("app", {}).get("selected_profile_id", "general")
+
+        self.profiles_table.blockSignals(True)
+        self.profiles_table.setRowCount(0)
+        selected_row = 0
+        for row, profile in enumerate(self.meeting_profiles):
+            self.profiles_table.insertRow(row)
+            name_item = QTableWidgetItem(profile.name)
+            name_item.setData(Qt.UserRole, profile.id)
+            category_item = QTableWidgetItem(profile.category)
+            category_item.setData(Qt.UserRole, profile.id)
+            self.profiles_table.setItem(row, 0, name_item)
+            self.profiles_table.setItem(row, 1, category_item)
+            if profile.id == target_id:
+                selected_row = row
+        self.profiles_table.blockSignals(False)
+
+        if self.meeting_profiles:
+            self.profiles_table.selectRow(selected_row)
+            self._load_profile_into_editor(self.meeting_profiles[selected_row])
+        else:
+            self.active_profile_id = ""
+            self._clear_profile_editor()
+
+    def _profile_row_selected(self) -> None:
+        selected = self.profiles_table.selectedItems()
+        if not selected:
+            return
+        profile_id = str(selected[0].data(Qt.UserRole) or "")
+        for profile in self.meeting_profiles:
+            if profile.id == profile_id:
+                self._load_profile_into_editor(profile)
+                return
+
+    def _load_profile_into_editor(self, profile: MeetingProfile) -> None:
+        self.active_profile_id = profile.id
+        self.profile_name_edit.setText(profile.name)
+        self.profile_category_edit.setText(profile.category)
+        self.profile_company_conducting_edit.setText(profile.company_conducting)
+        self.profile_companies_attending_edit.setText(profile.companies_attending)
+        self.profile_title_prefix_edit.setText(profile.default_meeting_title_prefix)
+        self.profile_context_edit.setPlainText(profile.ai_context)
+        self.profile_focus_edit.setPlainText(profile.notes_focus)
+
+    def _clear_profile_editor(self) -> None:
+        self.profile_name_edit.clear()
+        self.profile_category_edit.setText("General Meeting")
+        self.profile_company_conducting_edit.clear()
+        self.profile_companies_attending_edit.clear()
+        self.profile_title_prefix_edit.clear()
+        self.profile_context_edit.clear()
+        self.profile_focus_edit.clear()
+
+    def new_profile(self) -> None:
+        self.profiles_table.clearSelection()
+        self.active_profile_id = ""
+        self._clear_profile_editor()
+        self.profile_name_edit.setText("New Profile")
+        self.profile_name_edit.setFocus()
+        self.profile_name_edit.selectAll()
+
+    def save_profile(self) -> None:
+        name = self.profile_name_edit.text().strip()
+        if not name:
+            QMessageBox.warning(self, "Nova Notetaker", "Profile name is required.")
+            return
+
+        existing_ids = {profile.id for profile in self.meeting_profiles}
+        profile_id = self.active_profile_id or self.profile_store.make_id(name, existing_ids)
+        profile = MeetingProfile(
+            id=profile_id,
+            name=name,
+            category=self.profile_category_edit.text().strip() or "General Meeting",
+            company_conducting=self.profile_company_conducting_edit.text().strip(),
+            companies_attending=self.profile_companies_attending_edit.text().strip(),
+            default_meeting_title_prefix=self.profile_title_prefix_edit.text().strip(),
+            ai_context=self.profile_context_edit.toPlainText().strip(),
+            notes_focus=self.profile_focus_edit.toPlainText().strip(),
+        )
+
+        profiles = [item for item in self.meeting_profiles if item.id != profile_id]
+        profiles.append(profile)
+        profiles.sort(key=lambda item: (item.category.lower(), item.name.lower()))
+        self.profile_store.write_profiles(profiles)
+        self.meeting_profiles = self.profile_store.list_profiles()
+        self.settings.setdefault("app", {})["selected_profile_id"] = profile.id
+        save_settings(self.settings)
+        self._populate_profile_combo()
+        select_combo_by_data(self.profile_combo, profile.id)
+        self.refresh_profiles_table(profile.id)
+        self.update_settings_summary()
+        self.log(f"Saved meeting profile: {profile.name}")
+
+    def delete_profile(self) -> None:
+        if not self.active_profile_id:
+            return
+        if len(self.meeting_profiles) <= 1:
+            QMessageBox.warning(self, "Nova Notetaker", "At least one meeting profile must remain.")
+            return
+        profile = next((item for item in self.meeting_profiles if item.id == self.active_profile_id), None)
+        if profile is None:
+            return
+
+        response = QMessageBox.question(
+            self,
+            "Delete Meeting Profile",
+            f"Delete the meeting profile '{profile.name}'?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if response != QMessageBox.Yes:
+            return
+
+        remaining = [item for item in self.meeting_profiles if item.id != profile.id]
+        self.profile_store.write_profiles(remaining)
+        selected_id = remaining[0].id
+        if self.settings.get("app", {}).get("selected_profile_id") == profile.id:
+            self.settings.setdefault("app", {})["selected_profile_id"] = selected_id
+            save_settings(self.settings)
+        self._populate_profile_combo()
+        select_combo_by_data(self.profile_combo, self.settings.get("app", {}).get("selected_profile_id", selected_id))
+        self.refresh_profiles_table(selected_id)
+        self.update_settings_summary()
+        self.log(f"Deleted meeting profile: {profile.name}")
+
+    def refresh_templates_table(self, selected_id: str | None = None) -> None:
+        self.note_templates = self.template_store.list_templates()
+        target_id = selected_id or self.active_template_id or self.settings.get("app", {}).get("selected_template_id", "standard")
+
+        self.templates_table.blockSignals(True)
+        self.templates_table.setRowCount(0)
+        selected_row = 0
+        for row, template in enumerate(self.note_templates):
+            self.templates_table.insertRow(row)
+            name_item = QTableWidgetItem(template.name)
+            name_item.setData(Qt.UserRole, template.id)
+            category_item = QTableWidgetItem(template.category)
+            category_item.setData(Qt.UserRole, template.id)
+            self.templates_table.setItem(row, 0, name_item)
+            self.templates_table.setItem(row, 1, category_item)
+            if template.id == target_id:
+                selected_row = row
+        self.templates_table.blockSignals(False)
+
+        if self.note_templates:
+            self.templates_table.selectRow(selected_row)
+            self._load_template_into_editor(self.note_templates[selected_row])
+        else:
+            self.active_template_id = ""
+            self._clear_template_editor()
+
+    def _template_row_selected(self) -> None:
+        selected = self.templates_table.selectedItems()
+        if not selected:
+            return
+        template_id = str(selected[0].data(Qt.UserRole) or "")
+        for template in self.note_templates:
+            if template.id == template_id:
+                self._load_template_into_editor(template)
+                return
+
+    def _load_template_into_editor(self, template: NoteTemplate) -> None:
+        self.active_template_id = template.id
+        self.template_name_edit.setText(template.name)
+        self.template_category_edit.setText(template.category)
+        self.template_description_edit.setText(template.description)
+        self.template_sections_edit.setText(template.preferred_sections)
+        self.template_focus_edit.setPlainText(template.notes_focus)
+        self.template_custom_edit.setPlainText(template.custom_instructions)
+
+    def _clear_template_editor(self) -> None:
+        self.template_name_edit.clear()
+        self.template_category_edit.setText("General")
+        self.template_description_edit.clear()
+        self.template_sections_edit.setText("Summary, Key Decisions, Action Items, Important Dates, Risks / Blockers, Follow-ups")
+        self.template_focus_edit.clear()
+        self.template_custom_edit.clear()
+
+    def new_template(self) -> None:
+        self.templates_table.clearSelection()
+        self.active_template_id = ""
+        self._clear_template_editor()
+        self.template_name_edit.setText("New Template")
+        self.template_name_edit.setFocus()
+        self.template_name_edit.selectAll()
+
+    def save_template(self) -> None:
+        name = self.template_name_edit.text().strip()
+        if not name:
+            QMessageBox.warning(self, "Nova Notetaker", "Template name is required.")
+            return
+
+        existing_ids = {template.id for template in self.note_templates}
+        template_id = self.active_template_id or self.template_store.make_id(name, existing_ids)
+        template = NoteTemplate(
+            id=template_id,
+            name=name,
+            category=self.template_category_edit.text().strip() or "General",
+            description=self.template_description_edit.text().strip(),
+            notes_focus=self.template_focus_edit.toPlainText().strip(),
+            custom_instructions=self.template_custom_edit.toPlainText().strip(),
+            preferred_sections=self.template_sections_edit.text().strip()
+            or "Summary, Key Decisions, Action Items, Important Dates, Risks / Blockers, Follow-ups",
+        )
+
+        templates = [item for item in self.note_templates if item.id != template_id]
+        templates.append(template)
+        templates.sort(key=lambda item: (item.category.lower(), item.name.lower()))
+        self.template_store.write_templates(templates)
+        self.note_templates = self.template_store.list_templates()
+        self.settings.setdefault("app", {})["selected_template_id"] = template.id
+        save_settings(self.settings)
+        self._populate_template_combo()
+        select_combo_by_data(self.template_combo, template.id)
+        self.refresh_templates_table(template.id)
+        self.update_settings_summary()
+        self.log(f"Saved note template: {template.name}")
+
+    def delete_template(self) -> None:
+        if not self.active_template_id:
+            return
+        if len(self.note_templates) <= 1:
+            QMessageBox.warning(self, "Nova Notetaker", "At least one template must remain.")
+            return
+        template = next((item for item in self.note_templates if item.id == self.active_template_id), None)
+        if template is None:
+            return
+
+        response = QMessageBox.question(
+            self,
+            "Delete Template",
+            f"Delete the template '{template.name}'?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if response != QMessageBox.Yes:
+            return
+
+        remaining = [item for item in self.note_templates if item.id != template.id]
+        self.template_store.write_templates(remaining)
+        selected_id = remaining[0].id
+        if self.settings.get("app", {}).get("selected_template_id") == template.id:
+            self.settings.setdefault("app", {})["selected_template_id"] = selected_id
+            save_settings(self.settings)
+        self._populate_template_combo()
+        select_combo_by_data(self.template_combo, self.settings.get("app", {}).get("selected_template_id", selected_id))
+        self.refresh_templates_table(selected_id)
+        self.update_settings_summary()
+        self.log(f"Deleted note template: {template.name}")
 
     def _build_settings_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(34, 28, 18, 28)
+        layout.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+
         panel = QFrame()
         panel.setObjectName("Panel")
+        panel.setMinimumHeight(760)
         panel_layout = QVBoxLayout(panel)
         panel_layout.setContentsMargins(22, 20, 22, 20)
         panel_layout.setSpacing(16)
@@ -729,6 +1297,25 @@ class MainWindow(QMainWindow):
         self.settings_long_audio_chunk_seconds.setRange(60, 600)
         self.settings_long_audio_chunk_seconds.setValue(int(self.settings["transcription"].get("long_audio_chunk_seconds", 180)))
 
+        for control in (
+            self.settings_mic_combo,
+            self.settings_loopback_combo,
+            self.settings_profile_combo,
+            self.settings_provider_combo,
+            self.settings_ollama_url,
+            self.settings_ollama_model,
+            self.settings_ai_timeout,
+            self.settings_transcription_enabled,
+            self.settings_whisper_url,
+            self.settings_whisper_model,
+            self.settings_whisper_language,
+            self.settings_use_vad,
+            self.settings_cross_bleed_cleanup,
+            self.settings_transcription_timeout,
+            self.settings_long_audio_chunk_seconds,
+        ):
+            control.setMinimumHeight(36)
+
         form.addRow("Microphone", self.settings_mic_combo)
         form.addRow("System audio", self.settings_loopback_combo)
         form.addRow("Capture profile", self.settings_profile_combo)
@@ -758,7 +1345,8 @@ class MainWindow(QMainWindow):
         panel_layout.addLayout(button_row)
         panel_layout.addStretch()
 
-        layout.addWidget(panel)
+        scroll.setWidget(panel)
+        layout.addWidget(scroll)
         return page
 
     def _placeholder_page(self, title_text: str, body_text: str) -> QWidget:
@@ -934,6 +1522,7 @@ class MainWindow(QMainWindow):
             self.footer_intelligence_label.setVisible(False)
 
         self._apply_meetings_responsive(mode)
+        self._apply_templates_responsive(mode)
 
     def _set_sidebar_mode(self, width: int, compact: bool, show_status: bool) -> None:
         self.sidebar.setFixedWidth(width)
@@ -958,6 +1547,56 @@ class MainWindow(QMainWindow):
             self.meetings_layout.setContentsMargins(16, 18, 12, 18)
         else:
             self.meetings_layout.setContentsMargins(28 if mode == "compact" else 34, 28, 18, 28)
+
+    def _apply_templates_responsive(self, mode: str) -> None:
+        if not hasattr(self, "profile_section_layout"):
+            return
+
+        if mode == "narrow":
+            margins = (16, 18, 12, 18)
+            section_margins = (12, 12, 12, 12)
+            spacing = 10
+            stack_sections = True
+        elif mode == "compact":
+            margins = (22, 22, 14, 22)
+            section_margins = (12, 12, 12, 12)
+            spacing = 12
+            stack_sections = True
+        elif mode == "medium":
+            margins = (28, 24, 16, 24)
+            section_margins = (14, 14, 14, 14)
+            spacing = 14
+            stack_sections = False
+        else:
+            margins = (34, 28, 18, 28)
+            section_margins = (14, 14, 14, 14)
+            spacing = 14
+            stack_sections = False
+
+        self.templates_page_layout.setContentsMargins(*margins)
+        self.templates_content_layout.setSpacing(spacing)
+        for section_layout in (self.profile_section_layout, self.template_section_layout):
+            section_layout.setContentsMargins(*section_margins)
+            section_layout.setSpacing(spacing)
+
+        if stack_sections:
+            self.profile_section_layout.addWidget(self.profile_list_panel, 0, 0)
+            self.profile_section_layout.addWidget(self.profile_editor_panel, 1, 0)
+            self.profile_section_layout.setColumnStretch(0, 1)
+            self.profile_section_layout.setColumnStretch(1, 0)
+            self.template_section_layout.addWidget(self.template_list_panel, 0, 0)
+            self.template_section_layout.addWidget(self.template_editor_panel, 1, 0)
+            self.template_section_layout.setColumnStretch(0, 1)
+            self.template_section_layout.setColumnStretch(1, 0)
+        else:
+            self.profile_section_layout.addWidget(self.profile_list_panel, 0, 0)
+            self.profile_section_layout.addWidget(self.profile_editor_panel, 0, 1)
+            self.profile_section_layout.setColumnStretch(0, 1)
+            self.profile_section_layout.setColumnStretch(1, 2)
+            self.template_section_layout.addWidget(self.template_list_panel, 0, 0)
+            self.template_section_layout.addWidget(self.template_editor_panel, 0, 1)
+            self.template_section_layout.setColumnStretch(0, 1)
+            self.template_section_layout.setColumnStretch(1, 2)
 
     def _set_transcript_rows(self, rows: list[tuple[str, str, str]]) -> None:
         while self.transcript_layout.count():
@@ -1384,6 +2023,8 @@ class MainWindow(QMainWindow):
         self.settings["audio"]["capture_mic"] = capture_mic
         save_settings(self.settings)
 
+        meeting_profile = self._selected_meeting_profile()
+        note_template = self._selected_note_template()
         mic_device = self._resolve_microphone_device()
         loop_device = self._resolve_loopback_device()
 
@@ -1403,6 +2044,8 @@ class MainWindow(QMainWindow):
             system_device_name=loop_device.name if loop_device else None,
             capture_mic=capture_mic,
             capture_profile=str(self.settings["audio"].get("capture_profile", "external_mic_speakers")),
+            meeting_profile=self._profile_metadata(meeting_profile),
+            note_template=self._template_metadata(note_template),
             status="recording",
         )
         self.meeting_store.write_metadata(self.meeting_folder, self.metadata)
@@ -1617,11 +2260,13 @@ class MainWindow(QMainWindow):
         system_setting = self.settings["audio"].get("system_loopback_device_name", "") or DEFAULT_LOOPBACK_DEVICE
         system_name = "Windows default output" if system_setting == DEFAULT_LOOPBACK_DEVICE else system_setting or "No system audio selected"
         profile = self._profile_label(self.settings["audio"].get("capture_profile", ""))
+        meeting_profile_name = self._selected_meeting_profile().name if hasattr(self, "profile_combo") else "General Meeting"
+        template_name = self._selected_note_template().name if hasattr(self, "template_combo") else "Standard Meeting Notes"
         provider = self.settings["ai"].get("provider", "ollama")
         whisper = "on" if self.settings["transcription"].get("enabled", False) else "off"
         mic_state = "on" if self.settings["audio"].get("capture_mic", True) else "muted"
         self.settings_summary.setText(
-            f"Mic {mic_state}  |  System: {system_name}  |  Profile: {profile}  |  {provider} / WhisperLive {whisper}"
+            f"Mic {mic_state}  |  System: {system_name}  |  Audio: {profile}  |  Meeting: {meeting_profile_name}  |  Template: {template_name}  |  {provider} / WhisperLive {whisper}"
         )
         if hasattr(self, "footer_transcription_label"):
             self.footer_transcription_label.setText(f"Transcription: WhisperLive {whisper}")
@@ -1923,9 +2568,32 @@ class MainWindow(QMainWindow):
         except Exception as error:
             QMessageBox.warning(self, "Nova Notetaker", f"Could not read meeting metadata: {error}")
             return
-        dialog = ReprocessDialog(self)
+        self.meeting_profiles = self.profile_store.list_profiles()
+        self.note_templates = self.template_store.list_templates()
+        current_profile_id = (
+            str(metadata.meeting_profile.get("id", ""))
+            if isinstance(metadata.meeting_profile, dict)
+            else ""
+        ) or self.settings.get("app", {}).get("selected_profile_id", "general")
+        current_template_id = (
+            str(metadata.note_template.get("id", ""))
+            if isinstance(metadata.note_template, dict)
+            else ""
+        ) or self.settings.get("app", {}).get("selected_template_id", "standard")
+        dialog = ReprocessDialog(
+            self,
+            self.meeting_profiles,
+            self.note_templates,
+            current_profile_id,
+            current_template_id,
+        )
+        dialog.setStyleSheet(build_stylesheet(self.current_theme))
         if dialog.exec() != QDialog.Accepted:
             return
+        meeting_profile = self.profile_store.get_profile(dialog.profile_id)
+        note_template = self.template_store.get_template(dialog.template_id)
+        metadata.meeting_profile = self._profile_metadata(meeting_profile)
+        metadata.note_template = self._template_metadata(note_template)
         metadata.status = "processing"
         self.meeting_store.write_metadata(folder, metadata)
         self.meeting_folder = folder
@@ -1939,7 +2607,9 @@ class MainWindow(QMainWindow):
         if hasattr(self, "meeting_preview"):
             self.meeting_preview.setPlainText("Reprocessing selected meeting...")
         self._set_active_nav(1)
-        self.log(f"Reprocessing meeting ({dialog.mode}): {folder}")
+        self.log(
+            f"Reprocessing meeting ({dialog.mode}) with {meeting_profile.name} / {note_template.name}: {folder}"
+        )
         self._start_processing(folder, metadata, mode=dialog.mode)
 
     def copy_current_preview(self) -> None:
@@ -2063,6 +2733,8 @@ class MainWindow(QMainWindow):
         lines = [
             f"Status: {metadata.status}",
             f"Profile: {self._profile_label(metadata.capture_profile or '')}",
+            f"Meeting Profile: {metadata.meeting_profile.get('name', 'Unknown') if isinstance(metadata.meeting_profile, dict) else 'Unknown'}",
+            f"Template: {metadata.note_template.get('name', 'Unknown') if isinstance(metadata.note_template, dict) else 'Unknown'}",
             f"Mic Capture: {'on' if metadata.capture_mic else 'muted'}",
             f"Started: {metadata.started_at}",
             f"Ended: {metadata.ended_at or 'Unknown'}",

@@ -121,6 +121,10 @@ QFrame#Footer {{
     border-top: 1px solid {t["border"]};
 }}
 
+QWidget#Transparent {{
+    background-color: transparent;
+}}
+
 QWidget#OverviewRoot {{
     background-color: {t["app"]};
 }}
@@ -128,6 +132,12 @@ QWidget#OverviewRoot {{
 QLabel#Title {{
     color: {t["text"]};
     font-size: 24px;
+    font-weight: 700;
+}}
+
+QLabel#PanelTitle {{
+    color: {t["text"]};
+    font-size: 18px;
     font-weight: 700;
 }}
 
@@ -234,6 +244,7 @@ QLineEdit, QComboBox, QSpinBox {{
     border: 1px solid {t["border"]};
     border-radius: 6px;
     padding: 8px 10px;
+    min-height: 18px;
 }}
 
 QLineEdit:focus, QComboBox:hover, QSpinBox:hover {{
@@ -343,6 +354,7 @@ QCheckBox {{
     background-color: transparent;
     color: {t["text"]};
     spacing: 8px;
+    min-height: 28px;
 }}
 
 QCheckBox::indicator {{
@@ -356,6 +368,30 @@ QCheckBox::indicator {{
 QCheckBox::indicator:checked {{
     background-color: {t["orange"]};
     border: 1px solid {t["orange"]};
+}}
+
+QRadioButton {{
+    background-color: transparent;
+    color: {t["text"]};
+    spacing: 10px;
+    padding: 5px 2px;
+}}
+
+QRadioButton::indicator {{
+    width: 17px;
+    height: 17px;
+    border-radius: 9px;
+    border: 1px solid {t["secondary"]};
+    background-color: transparent;
+}}
+
+QRadioButton::indicator:hover {{
+    border: 1px solid {t["orange"]};
+}}
+
+QRadioButton::indicator:checked {{
+    border: 2px solid {t["orange"]};
+    background-color: {t["orange"]};
 }}
 
 QCheckBox#MicToggle {{

@@ -19,6 +19,8 @@ class MeetingMetadata:
     system_device_name: str | None = None
     capture_mic: bool = True
     capture_profile: str | None = None
+    meeting_profile: dict[str, Any] = field(default_factory=dict)
+    note_template: dict[str, Any] = field(default_factory=dict)
     status: str = "created"
     audio_files: dict[str, Any] = field(default_factory=dict)
     processing: dict[str, Any] = field(default_factory=dict)

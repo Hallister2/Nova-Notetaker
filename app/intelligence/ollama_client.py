@@ -22,7 +22,7 @@ class OllamaClient:
         self.model = str(ai.get("ollama_model", "llama3.1:latest"))
         self.timeout_seconds = int(ai.get("timeout_seconds", 180))
 
-    def generate_meeting_notes(self, transcript: str) -> NotesResult:
+    def generate_meeting_notes(self, transcript: str, profile_context: str = "") -> NotesResult:
         if not transcript.strip():
             return NotesResult(
                 text="",
@@ -30,7 +30,7 @@ class OllamaClient:
                 warning="No transcript text is available for Ollama summarization.",
             )
 
-        prompt = self._build_prompt(transcript)
+        prompt = self._build_prompt(transcript, profile_context=profile_context)
         try:
             response = requests.post(
                 f"{self.url}/api/generate",
@@ -67,9 +67,10 @@ class OllamaClient:
             )
 
     @staticmethod
-    def _build_prompt(transcript: str) -> str:
+    def _build_prompt(transcript: str, profile_context: str = "") -> str:
         hints = build_note_hints(transcript)
         hint_block = f"\n\n{hints}\n" if hints else ""
+        profile_block = f"\nMeeting profile context:\n{profile_context}\n" if profile_context.strip() else ""
         return (
             "You are Nova Notetaker. Convert this meeting transcript into clean Markdown notes.\n"
             "Return only Markdown notes. Do not include an introduction, explanation, or duplicate title.\n"
@@ -97,7 +98,9 @@ class OllamaClient:
             "Follow-ups are only broad next steps without a clear owner.\n\n"
             "Important date format:\n"
             "- Date: <date>; Context: <what it refers to>; Confidence: <High, Medium, or Low>\n\n"
+            "Use the meeting profile context to tune emphasis and terminology, but do not invent facts from it.\n"
             f"{hint_block}"
+            f"{profile_block}\n"
             f"Transcript:\n{transcript}"
         )
 

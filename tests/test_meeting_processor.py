@@ -96,6 +96,28 @@ class MeetingProcessorTests(unittest.TestCase):
             self.assertTrue(result.notes_path.exists())
             self.assertEqual(metadata.processing["mode"], "notes_only")
 
+    def test_notes_only_mode_allows_one_pending_source_when_other_source_has_text(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            folder = Path(temp_dir)
+            (folder / "transcript.md").write_text(
+                "# Transcript\n\n"
+                "## You\n\n"
+                "_Transcript pending._\n\n"
+                "## Meeting\n\n"
+                "Existing meeting audio transcript text.\n",
+                encoding="utf-8",
+            )
+            metadata = MeetingMetadata(title="System Audio Only", started_at="2026-05-25T09:00:00", capture_mic=False)
+            settings = {
+                "transcription": {"enabled": False, "cross_bleed_cleanup": True},
+                "ai": {"provider": "none"},
+                "storage": {"meetings_dir": "meetings"},
+            }
+
+            MeetingProcessor(MeetingStore(), settings=settings).process(folder, metadata, lambda message: None, mode="notes_only")
+
+            self.assertNotIn("Skipping AI notes because no transcript text is available yet.", metadata.processing["warnings"])
+
     @staticmethod
     def _write_silent_wav(path: Path) -> None:
         with wave.open(str(path), "wb") as wav_file:

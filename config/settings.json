@@ -1,7 +1,9 @@
 {
   "app": {
     "name": "Nova Notetaker",
-    "theme": "modern_gradient"
+    "theme": "executive_dark",
+    "selected_profile_id": "general",
+    "selected_template_id": "standard"
   },
   "audio": {
     "mic_device_name": "__default_microphone__",
