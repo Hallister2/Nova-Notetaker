@@ -281,6 +281,28 @@ class ProcessingWorker(QObject):
             self.finished.emit()
 
 
+class BatchProcessingWorker(QObject):
+    status = Signal(str)
+    finished = Signal()
+
+    def __init__(self, jobs: list[tuple[Path, MeetingMetadata]], mode: str = "notes_only") -> None:
+        super().__init__()
+        self.jobs = jobs
+        self.mode = mode
+
+    @Slot()
+    def process(self) -> None:
+        processor = MeetingProcessor()
+        try:
+            for index, (folder, metadata) in enumerate(self.jobs, start=1):
+                self.status.emit(f"Batch reprocess {index}/{len(self.jobs)}: {metadata.title or folder.name}")
+                processor.process(folder, metadata, self.status.emit, mode=self.mode)
+        except Exception as error:
+            self.status.emit(f"Batch reprocess failed: {error}")
+        finally:
+            self.finished.emit()
+
+
 class MainWindow(QMainWindow):
     request_worker_start = Signal()
     request_worker_stop = Signal()
@@ -300,6 +322,8 @@ class MainWindow(QMainWindow):
         self.worker: CaptureWorker | None = None
         self.processing_thread: QThread | None = None
         self.processing_worker: ProcessingWorker | None = None
+        self.batch_processing_thread: QThread | None = None
+        self.batch_processing_worker: BatchProcessingWorker | None = None
         self.microphones: list[AudioDevice] = []
         self.loopbacks: list[AudioDevice] = []
         self.active_preview_file = "notes.md"
@@ -329,6 +353,7 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self.refresh_devices()
         self.refresh_meetings()
+        self.refresh_review_center()
 
     def _build_ui(self) -> None:
         root = QWidget()
@@ -649,6 +674,9 @@ class MainWindow(QMainWindow):
         layout.setSpacing(16)
         self.mark_important_button = QPushButton("Mark Important")
         self.mark_important_button.setEnabled(False)
+        self.open_latest_button = QPushButton("Open latest meeting")
+        self.open_latest_button.setEnabled(False)
+        self.open_latest_button.clicked.connect(self.open_latest_meeting)
         self.recording_button = QPushButton("Start Recording")
         self.recording_button.setObjectName("PrimaryButton")
         self.recording_button.clicked.connect(self.toggle_capture)
@@ -657,6 +685,7 @@ class MainWindow(QMainWindow):
         self.add_note_button = QPushButton("Add Note")
         self.add_note_button.setEnabled(False)
         layout.addWidget(self.mark_important_button)
+        layout.addWidget(self.open_latest_button)
         layout.addWidget(self.recording_button, stretch=1)
         layout.addWidget(self.add_note_button)
         return bar
@@ -748,17 +777,23 @@ class MainWindow(QMainWindow):
         self.refresh_meetings_button.clicked.connect(self.refresh_meetings)
         self.reprocess_button = QPushButton("Reprocess")
         self.reprocess_button.clicked.connect(self.reprocess_selected_meeting)
+        self.batch_reprocess_button = QPushButton("Batch reprocess")
+        self.batch_reprocess_button.clicked.connect(self.batch_reprocess_selected_meetings)
         self.open_folder_button = QPushButton("Open folder")
         self.open_folder_button.clicked.connect(self.open_selected_meeting_folder)
         self.export_html_button = QPushButton("Export HTML")
         self.export_html_button.clicked.connect(self.export_selected_notes_html)
+        self.export_calendar_button = QPushButton("Export calendar")
+        self.export_calendar_button.clicked.connect(self.export_selected_calendar_ics)
         self.delete_meeting_button = QPushButton("Delete selected")
         self.delete_meeting_button.clicked.connect(self.delete_selected_meetings)
         for button in (
             self.refresh_meetings_button,
             self.reprocess_button,
+            self.batch_reprocess_button,
             self.open_folder_button,
             self.export_html_button,
+            self.export_calendar_button,
             self.delete_meeting_button,
         ):
             archive_buttons.addWidget(button)
@@ -806,14 +841,97 @@ class MainWindow(QMainWindow):
         panel.setObjectName("Panel")
         panel_layout = QVBoxLayout(panel)
         panel_layout.setContentsMargins(18, 18, 18, 18)
-        title = QLabel("Logs")
+        title = QLabel("Review Center")
         title.setObjectName("Title")
         panel_layout.addWidget(title)
-        panel_layout.addWidget(self._muted_label("Raw output logs for capture, transcription, and processing."))
+        panel_layout.addWidget(self._muted_label("Track open action items, calendar candidates, search history, and raw processing logs."))
+
+        review_tabs = QTabWidget()
+
+        actions_page = QWidget()
+        actions_layout = QVBoxLayout(actions_page)
+        actions_layout.setContentsMargins(0, 12, 0, 0)
+        actions_header = QHBoxLayout()
+        actions_header.addWidget(self._section_label("Open action dashboard"))
+        actions_header.addStretch()
+        self.refresh_actions_button = QPushButton("Refresh")
+        self.refresh_actions_button.clicked.connect(self.refresh_review_center)
+        actions_header.addWidget(self.refresh_actions_button)
+        actions_layout.addLayout(actions_header)
+        self.action_dashboard_table = QTableWidget(0, 6)
+        self.action_dashboard_table.setHorizontalHeaderLabels(["Meeting", "Owner", "Action", "Due", "Confidence", "Status"])
+        self.action_dashboard_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.action_dashboard_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.action_dashboard_table.verticalHeader().setVisible(False)
+        action_header = self.action_dashboard_table.horizontalHeader()
+        action_header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        action_header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        action_header.setSectionResizeMode(2, QHeaderView.Stretch)
+        action_header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        action_header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        action_header.setSectionResizeMode(5, QHeaderView.ResizeToContents)
+        actions_layout.addWidget(self.action_dashboard_table, stretch=1)
+
+        calendar_page = QWidget()
+        calendar_layout = QVBoxLayout(calendar_page)
+        calendar_layout.setContentsMargins(0, 12, 0, 0)
+        calendar_header = QHBoxLayout()
+        calendar_header.addWidget(self._section_label("Calendar candidates"))
+        calendar_header.addStretch()
+        self.export_all_calendar_button = QPushButton("Export all dates")
+        self.export_all_calendar_button.clicked.connect(self.export_all_calendar_ics)
+        calendar_header.addWidget(self.export_all_calendar_button)
+        calendar_layout.addLayout(calendar_header)
+        self.calendar_table = QTableWidget(0, 4)
+        self.calendar_table.setHorizontalHeaderLabels(["Meeting", "Date", "Context", "Confidence"])
+        self.calendar_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.calendar_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.calendar_table.verticalHeader().setVisible(False)
+        calendar_table_header = self.calendar_table.horizontalHeader()
+        calendar_table_header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        calendar_table_header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        calendar_table_header.setSectionResizeMode(2, QHeaderView.Stretch)
+        calendar_table_header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        calendar_layout.addWidget(self.calendar_table, stretch=1)
+
+        search_page = QWidget()
+        search_layout = QVBoxLayout(search_page)
+        search_layout.setContentsMargins(0, 12, 0, 0)
+        search_controls = QHBoxLayout()
+        self.meeting_search_input = QLineEdit()
+        self.meeting_search_input.setPlaceholderText("Search notes, transcripts, titles, owners, dates...")
+        self.meeting_search_input.returnPressed.connect(self.search_meetings)
+        self.meeting_search_button = QPushButton("Search")
+        self.meeting_search_button.clicked.connect(self.search_meetings)
+        search_controls.addWidget(self.meeting_search_input, stretch=1)
+        search_controls.addWidget(self.meeting_search_button)
+        search_layout.addLayout(search_controls)
+        self.search_results_table = QTableWidget(0, 4)
+        self.search_results_table.setHorizontalHeaderLabels(["Meeting", "File", "Match", "Open"])
+        self.search_results_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.search_results_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.search_results_table.verticalHeader().setVisible(False)
+        search_header = self.search_results_table.horizontalHeader()
+        search_header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        search_header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        search_header.setSectionResizeMode(2, QHeaderView.Stretch)
+        search_header.setSectionResizeMode(3, QHeaderView.Fixed)
+        self.search_results_table.setColumnWidth(3, 130)
+        search_layout.addWidget(self.search_results_table, stretch=1)
+
+        logs_page = QWidget()
+        logs_layout = QVBoxLayout(logs_page)
+        logs_layout.setContentsMargins(0, 12, 0, 0)
         self.log_output = QTextEdit()
         self.log_output.setReadOnly(True)
         self.log_output.append("Nova Notetaker online.")
-        panel_layout.addWidget(self.log_output, stretch=1)
+        logs_layout.addWidget(self.log_output, stretch=1)
+
+        review_tabs.addTab(actions_page, "Actions")
+        review_tabs.addTab(calendar_page, "Calendar")
+        review_tabs.addTab(search_page, "Search")
+        review_tabs.addTab(logs_page, "Raw logs")
+        panel_layout.addWidget(review_tabs, stretch=1)
         layout.addWidget(panel)
         return page
 
@@ -2202,6 +2320,8 @@ class MainWindow(QMainWindow):
         self.settings_button.setEnabled(False)
         self.capture_mic_toggle.setEnabled(False)
         self.reprocess_button.setEnabled(False)
+        if hasattr(self, "batch_reprocess_button"):
+            self.batch_reprocess_button.setEnabled(False)
         self.recording_started_at = datetime.now()
         self.processing_started_at = None
         self.timer_phase = "recording"
@@ -2500,12 +2620,16 @@ class MainWindow(QMainWindow):
         self.timer_phase = "idle"
         if hasattr(self, "reprocess_button"):
             self.reprocess_button.setEnabled(True)
+        if hasattr(self, "batch_reprocess_button"):
+            self.batch_reprocess_button.setEnabled(True)
         if hasattr(self, "refresh_meetings_button"):
             self.refresh_meetings_button.setEnabled(True)
         if hasattr(self, "open_folder_button"):
             self.open_folder_button.setEnabled(True)
         if hasattr(self, "export_html_button"):
             self.export_html_button.setEnabled(True)
+        if hasattr(self, "export_calendar_button"):
+            self.export_calendar_button.setEnabled(True)
         self.orb.set_state("idle")
         self.status_label.setObjectName("GreenText")
         self.status_label.setText("Ready")
@@ -2588,6 +2712,9 @@ class MainWindow(QMainWindow):
         self.meeting_table.setColumnWidth(6, 150)
         if self.meeting_table.rowCount() and self._selected_meeting_folder() is None:
             self.meeting_table.selectRow(0)
+        if hasattr(self, "open_latest_button"):
+            self.open_latest_button.setEnabled(bool(self.meeting_store.list_meetings()))
+        self.refresh_review_center()
 
     def _meeting_matches_filter(
         self,
@@ -2638,6 +2765,100 @@ class MainWindow(QMainWindow):
             self.meeting_preview.setMarkdown(content)
         else:
             self.meeting_preview.setPlainText(content)
+
+    def refresh_review_center(self) -> None:
+        if hasattr(self, "action_dashboard_table"):
+            self._refresh_action_dashboard()
+        if hasattr(self, "calendar_table"):
+            self._refresh_calendar_candidates()
+
+    def _refresh_action_dashboard(self) -> None:
+        self.action_dashboard_table.setRowCount(0)
+        for folder in self.meeting_store.list_meetings():
+            try:
+                metadata = self.meeting_store.read_metadata(folder)
+                insights = load_or_build_insights(folder)
+            except Exception:
+                continue
+            for action_index, action in enumerate(insights.actions):
+                if action.status.lower() == "done":
+                    continue
+                row = self.action_dashboard_table.rowCount()
+                self.action_dashboard_table.insertRow(row)
+                values = [
+                    metadata.title or folder.name,
+                    action.owner or "Unknown",
+                    action.text,
+                    action.due_date or "Unknown",
+                    action.confidence or "",
+                    action.status or "open",
+                ]
+                for column, value in enumerate(values):
+                    item = QTableWidgetItem(value)
+                    item.setData(Qt.UserRole, str(folder))
+                    item.setData(Qt.UserRole + 1, action_index)
+                    self.action_dashboard_table.setItem(row, column, item)
+                self.action_dashboard_table.setRowHeight(row, 38)
+
+    def _refresh_calendar_candidates(self) -> None:
+        self.calendar_table.setRowCount(0)
+        for folder in self.meeting_store.list_meetings():
+            try:
+                metadata = self.meeting_store.read_metadata(folder)
+                insights = load_or_build_insights(folder)
+            except Exception:
+                continue
+            for date_item in insights.dates:
+                row = self.calendar_table.rowCount()
+                self.calendar_table.insertRow(row)
+                values = [
+                    metadata.title or folder.name,
+                    date_item.due_date or date_item.text,
+                    date_item.context or date_item.text,
+                    date_item.confidence or "",
+                ]
+                for column, value in enumerate(values):
+                    item = QTableWidgetItem(value)
+                    item.setData(Qt.UserRole, str(folder))
+                    self.calendar_table.setItem(row, column, item)
+                self.calendar_table.setRowHeight(row, 36)
+
+    def search_meetings(self) -> None:
+        query = self.meeting_search_input.text().strip().lower() if hasattr(self, "meeting_search_input") else ""
+        if not query:
+            return
+        self.search_results_table.setRowCount(0)
+        for folder in self.meeting_store.list_meetings():
+            try:
+                metadata = self.meeting_store.read_metadata(folder)
+                title = metadata.title or folder.name
+            except Exception:
+                title = folder.name
+            for file_name in ("notes.md", "transcript.md"):
+                path = folder / file_name
+                if not path.exists():
+                    continue
+                for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                    plain = self._plain_note_text(line).strip()
+                    if query in plain.lower() or query in title.lower():
+                        self._add_search_result(folder, title, file_name, plain[:220] or title)
+                        break
+
+    def _add_search_result(self, folder: Path, title: str, file_name: str, match: str) -> None:
+        row = self.search_results_table.rowCount()
+        self.search_results_table.insertRow(row)
+        for column, value in enumerate((title, file_name, match)):
+            item = QTableWidgetItem(value)
+            item.setData(Qt.UserRole, str(folder))
+            self.search_results_table.setItem(row, column, item)
+        button = QPushButton("Open meeting")
+        button.setObjectName("TableActionButton")
+        button.clicked.connect(lambda checked=False, meeting_folder=folder: self.open_meeting_overview(meeting_folder))
+        open_item = QTableWidgetItem("")
+        open_item.setData(Qt.UserRole, str(folder))
+        self.search_results_table.setItem(row, 3, open_item)
+        self.search_results_table.setCellWidget(row, 3, button)
+        self.search_results_table.setRowHeight(row, 38)
 
     def open_meeting_overview(self, folder: Path | None = None) -> None:
         folder = folder or self._selected_meeting_folder()
@@ -2730,6 +2951,7 @@ class MainWindow(QMainWindow):
         details_layout.addWidget(self._section_label("Meeting intelligence"))
 
         insights = load_or_build_insights(folder)
+        details_layout.addWidget(self._overview_quality_card(metadata, insights))
         details_layout.addWidget(self._overview_action_items_card(folder, insights))
         for title_text, items in (
             ("Key decisions", insights.decisions),
@@ -2764,6 +2986,43 @@ class MainWindow(QMainWindow):
         layout.addLayout(content, stretch=1)
         self._fit_dialog_to_available_screen(dialog, preferred_width=1180, preferred_height=760)
         dialog.show()
+
+    def open_latest_meeting(self) -> None:
+        meetings = self.meeting_store.list_meetings()
+        if not meetings:
+            QMessageBox.information(self, "Nova Notetaker", "No meetings have been captured yet.")
+            return
+        self.open_meeting_overview(meetings[0])
+
+    def _overview_quality_card(self, metadata: MeetingMetadata, insights: MeetingInsights) -> QFrame:
+        card = QFrame()
+        card.setObjectName("RaisedPanel")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(8)
+        layout.addWidget(self._section_label("Quality summary"))
+        transcript_raw_path = metadata.processing.get("transcript_path", "") if isinstance(metadata.processing, dict) else ""
+        transcript_path = Path(transcript_raw_path) if transcript_raw_path else None
+        transcript_ok = bool(
+            transcript_path
+            and transcript_path.exists()
+            and MeetingProcessor._usable_existing_transcript_text(transcript_path.read_text(encoding="utf-8", errors="ignore")).strip()
+        )
+        system_audio = metadata.audio_files.get("system", {}) if isinstance(metadata.audio_files, dict) else {}
+        mic_audio = metadata.audio_files.get("mic", {}) if isinstance(metadata.audio_files, dict) else {}
+        duration = max(float(system_audio.get("duration_seconds") or 0), float(mic_audio.get("duration_seconds") or 0))
+        warnings = metadata.processing.get("warnings", []) if isinstance(metadata.processing, dict) else []
+        summary = [
+            f"Recording: {self._format_duration(duration)}" if duration else "Recording: unknown",
+            f"Transcript: {'available' if transcript_ok else 'missing'}",
+            f"Open actions: {sum(1 for item in insights.actions if item.status.lower() != 'done')}",
+            f"Review warnings: {len(insights.quality_warnings) + len(warnings)}",
+        ]
+        for line in summary:
+            label = QLabel(line)
+            label.setWordWrap(True)
+            layout.addWidget(label)
+        return card
 
     def _overview_action_items_card(self, folder: Path, insights: MeetingInsights) -> QFrame:
         card = QFrame()
@@ -2805,6 +3064,7 @@ class MainWindow(QMainWindow):
         insights.actions[action_index].status = status
         write_insights_json(folder, insights)
         self.refresh_meetings()
+        self.refresh_review_center()
         self.log(f"Updated action status to {status}: {folder.name}")
 
     @staticmethod
@@ -2912,9 +3172,13 @@ class MainWindow(QMainWindow):
         self.recording_button.setObjectName("DangerButton")
         self._refresh_widget_style(self.recording_button)
         self.reprocess_button.setEnabled(False)
+        if hasattr(self, "batch_reprocess_button"):
+            self.batch_reprocess_button.setEnabled(False)
         self.refresh_meetings_button.setEnabled(False)
         self.open_folder_button.setEnabled(False)
         self.export_html_button.setEnabled(False)
+        if hasattr(self, "export_calendar_button"):
+            self.export_calendar_button.setEnabled(False)
         self.archive_status.setText("Reprocessing selected meeting...")
         if hasattr(self, "meeting_preview"):
             self.meeting_preview.setPlainText("Reprocessing selected meeting...")
@@ -2923,6 +3187,74 @@ class MainWindow(QMainWindow):
             f"Reprocessing meeting ({dialog.mode}) with {meeting_profile.name} / {note_template.name}: {folder}"
         )
         self._start_processing(folder, metadata, mode=dialog.mode)
+
+    def batch_reprocess_selected_meetings(self) -> None:
+        folders = self._selected_meeting_folders()
+        if not folders:
+            QMessageBox.information(self, "Nova Notetaker", "Select one or more meetings to batch reprocess.")
+            return
+        if self.processing_thread is not None or self.batch_processing_thread is not None:
+            QMessageBox.information(self, "Nova Notetaker", "Nova is already processing meetings.")
+            return
+
+        self.meeting_profiles = self.profile_store.list_profiles()
+        self.note_templates = self.template_store.list_templates()
+        dialog = ReprocessDialog(
+            self,
+            self.meeting_profiles,
+            self.note_templates,
+            self.settings.get("app", {}).get("selected_profile_id", "general"),
+            self.settings.get("app", {}).get("selected_template_id", "standard"),
+        )
+        dialog.setWindowTitle("Batch Reprocess Meetings")
+        dialog.setStyleSheet(build_stylesheet(self.current_theme))
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        meeting_profile = self.profile_store.get_profile(dialog.profile_id)
+        note_template = self.template_store.get_template(dialog.template_id)
+        jobs: list[tuple[Path, MeetingMetadata]] = []
+        for folder in folders:
+            try:
+                metadata = self.meeting_store.read_metadata(folder)
+                metadata.meeting_profile = self._profile_metadata(meeting_profile)
+                metadata.note_template = self._template_metadata(note_template)
+                metadata.status = "processing"
+                self.meeting_store.write_metadata(folder, metadata)
+                jobs.append((folder, metadata))
+            except Exception as error:
+                self.log(f"Skipping batch reprocess for {folder.name}: {error}")
+
+        if not jobs:
+            QMessageBox.warning(self, "Nova Notetaker", "No selected meetings could be prepared for reprocess.")
+            return
+
+        self._set_active_nav(2)
+        self.archive_status.setText(f"Batch reprocessing {len(jobs)} meeting(s)...")
+        self.reprocess_button.setEnabled(False)
+        self.batch_reprocess_button.setEnabled(False)
+        self.refresh_meetings_button.setEnabled(False)
+        self.batch_processing_thread = QThread(self)
+        self.batch_processing_worker = BatchProcessingWorker(jobs, mode=dialog.mode)
+        self.batch_processing_worker.moveToThread(self.batch_processing_thread)
+        self.batch_processing_thread.started.connect(self.batch_processing_worker.process)
+        self.batch_processing_worker.status.connect(self.log)
+        self.batch_processing_worker.finished.connect(self.batch_processing_thread.quit)
+        self.batch_processing_worker.finished.connect(self.batch_processing_worker.deleteLater)
+        self.batch_processing_thread.finished.connect(self._batch_processing_finished)
+        self.batch_processing_thread.finished.connect(self.batch_processing_thread.deleteLater)
+        self.batch_processing_thread.start()
+
+    def _batch_processing_finished(self) -> None:
+        self.batch_processing_worker = None
+        self.batch_processing_thread = None
+        if hasattr(self, "archive_status"):
+            self.archive_status.setText("Batch reprocess complete")
+        for button_name in ("reprocess_button", "batch_reprocess_button", "refresh_meetings_button", "export_calendar_button"):
+            if hasattr(self, button_name):
+                getattr(self, button_name).setEnabled(True)
+        self.refresh_meetings()
+        self.log("Batch reprocess complete.")
 
     def copy_current_preview(self) -> None:
         if not hasattr(self, "meeting_preview"):
@@ -2984,6 +3316,77 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Nova Notetaker", "This meeting does not have notes yet.")
             return
         self._export_notes_html_for_folder(folder)
+
+    def export_selected_calendar_ics(self) -> None:
+        folder = self._selected_meeting_folder()
+        if folder is None:
+            QMessageBox.information(self, "Nova Notetaker", "Select a meeting to export dates.")
+            return
+        path = self._export_calendar_ics_for_folders([folder], folder / "calendar_candidates.ics")
+        if path:
+            QMessageBox.information(self, "Nova Notetaker", f"Calendar candidates exported:\n{path}")
+            self.log(f"Exported calendar candidates: {path}")
+
+    def export_all_calendar_ics(self) -> None:
+        folders = self.meeting_store.list_meetings()
+        path = self._export_calendar_ics_for_folders(folders, self.meeting_store.meetings_root / "nova_calendar_candidates.ics")
+        if path:
+            QMessageBox.information(self, "Nova Notetaker", f"Calendar candidates exported:\n{path}")
+            self.log(f"Exported calendar candidates: {path}")
+
+    def _export_calendar_ics_for_folders(self, folders: list[Path], output_path: Path) -> Path | None:
+        items: list[tuple[MeetingMetadata, InsightItem]] = []
+        for folder in folders:
+            try:
+                metadata = self.meeting_store.read_metadata(folder)
+                insights = load_or_build_insights(folder)
+                for date_item in insights.dates:
+                    items.append((metadata, date_item))
+            except Exception as error:
+                self.log(f"Skipping calendar export for {folder.name}: {error}")
+        if not items:
+            QMessageBox.information(self, "Nova Notetaker", "No calendar candidates found.")
+            return None
+
+        now_stamp = datetime.now().strftime("%Y%m%dT%H%M%S")
+        lines = [
+            "BEGIN:VCALENDAR",
+            "VERSION:2.0",
+            "PRODID:-//Nova Notetaker//Meeting Intelligence//EN",
+            "CALSCALE:GREGORIAN",
+        ]
+        for index, (metadata, date_item) in enumerate(items, start=1):
+            title = f"{metadata.title or 'Nova meeting'} - {date_item.context or date_item.text}"
+            description = f"Meeting: {metadata.title or 'Untitled'}\\nDetected date: {date_item.due_date or date_item.text}\\nConfidence: {date_item.confidence or 'Unknown'}"
+            lines.extend(
+                [
+                    "BEGIN:VTODO",
+                    f"UID:nova-{now_stamp}-{index}@nova-notetaker",
+                    f"DTSTAMP:{now_stamp}",
+                    f"SUMMARY:{self._ics_escape(title)}",
+                    f"DESCRIPTION:{self._ics_escape(description)}",
+                    "STATUS:NEEDS-ACTION",
+                    "END:VTODO",
+                ]
+            )
+        lines.append("END:VCALENDAR")
+        output_path.write_text("\r\n".join(lines) + "\r\n", encoding="utf-8")
+        return output_path
+
+    @staticmethod
+    def _ics_escape(text: str) -> str:
+        return text.replace("\\", "\\\\").replace("\n", "\\n").replace(",", "\\,").replace(";", "\\;")
+
+    @staticmethod
+    def _format_duration(seconds: float) -> str:
+        total_seconds = max(0, int(seconds))
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, secs = divmod(remainder, 60)
+        if hours:
+            return f"{hours}h {minutes}m {secs}s"
+        if minutes:
+            return f"{minutes}m {secs}s"
+        return f"{secs}s"
 
     def detect_active_window_title(self) -> None:
         title = self._active_window_title()

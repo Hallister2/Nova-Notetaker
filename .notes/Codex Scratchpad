@@ -387,6 +387,50 @@ Potential future insight improvements:
   - `py_compile` passed for changed UI/workflow files.
   - Relevant unit suite passed: 27 tests OK.
 
+## 2026-05-26 Update - Review Workflow Feature Batch
+
+- Added the next functionality layer requested by Chad:
+  - Open latest meeting.
+  - Meeting quality panel.
+  - Cross-meeting action dashboard.
+  - Calendar candidate export.
+  - Cross-meeting search.
+  - Batch reprocess.
+
+- Live Capture:
+  - Added `Open latest meeting` to the action bar.
+  - Button opens the newest meeting overview and becomes available once meetings exist.
+
+- Review Center:
+  - The Logs page is now a broader Review Center while preserving raw logs.
+  - Tabs added:
+    - Actions
+    - Calendar
+    - Search
+    - Raw logs
+  - Actions tab lists open action items across all meetings with meeting, owner, action text, due date, confidence, and status.
+  - Calendar tab lists detected scheduling candidates across all meetings.
+  - Search tab searches meeting titles, notes, and transcripts and opens matching meetings.
+
+- Meeting Overview:
+  - Added a quality summary card showing recording duration, transcript availability, open action count, and warning count.
+
+- Meetings:
+  - Added `Batch reprocess` for selected meetings.
+  - Added `Export calendar` for selected meeting dates.
+
+- Calendar export:
+  - Exports detected dates as `.ics` VTODO items.
+  - This is intentionally review-oriented because many extracted dates are fuzzy natural language such as "Tomorrow" or "Next meeting".
+
+- Batch reprocess:
+  - Runs selected meetings in a background worker.
+  - Uses the same reprocess dialog so Chad can choose full vs notes-only plus meeting profile and note template.
+
+- Verification:
+  - `py_compile` passed for changed files.
+  - Relevant unit suite passed: 27 tests OK.
+
 ## Communication Notes For ChatGPT / Design Team
 
 When giving design feedback, focus on:
