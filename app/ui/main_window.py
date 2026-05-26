@@ -6,6 +6,10 @@ import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlparse
+
+import requests
+import websocket
 
 from PySide6.QtCore import QObject, QThread, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QCursor, QTextDocument
@@ -732,6 +736,13 @@ class MainWindow(QMainWindow):
         header.setSectionResizeMode(5, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(6, QHeaderView.Fixed)
         self.meeting_table.setColumnWidth(6, 150)
+        filters = QHBoxLayout()
+        self.meeting_filter_combo = QComboBox()
+        self.meeting_filter_combo.addItems(["All meetings", "Needs review", "Has open actions", "Processed", "No transcript"])
+        self.meeting_filter_combo.currentIndexChanged.connect(self.refresh_meetings)
+        filters.addWidget(QLabel("Filter"))
+        filters.addWidget(self.meeting_filter_combo)
+        filters.addStretch()
         archive_buttons = QHBoxLayout()
         self.refresh_meetings_button = QPushButton("Refresh")
         self.refresh_meetings_button.clicked.connect(self.refresh_meetings)
@@ -753,6 +764,7 @@ class MainWindow(QMainWindow):
             archive_buttons.addWidget(button)
         self.archive_status = self._muted_label("Ready")
         meetings_panel_layout.addWidget(meetings_title)
+        meetings_panel_layout.addLayout(filters)
         meetings_panel_layout.addWidget(self.meeting_table, stretch=1)
         meetings_panel_layout.addLayout(archive_buttons)
         meetings_panel_layout.addWidget(self.archive_status)
@@ -1369,10 +1381,16 @@ class MainWindow(QMainWindow):
         button_row = QHBoxLayout()
         self.settings_refresh_devices_button = QPushButton("Refresh devices")
         self.settings_refresh_devices_button.clicked.connect(self.refresh_devices)
+        self.settings_test_ollama_button = QPushButton("Test Ollama")
+        self.settings_test_ollama_button.clicked.connect(self.test_ollama_connection)
+        self.settings_test_whisper_button = QPushButton("Test WhisperLive")
+        self.settings_test_whisper_button.clicked.connect(self.test_whisperlive_connection)
         self.settings_button = QPushButton("Save settings")
         self.settings_button.setObjectName("PrimaryButton")
         self.settings_button.clicked.connect(self.save_settings_page)
         button_row.addWidget(self.settings_refresh_devices_button)
+        button_row.addWidget(self.settings_test_ollama_button)
+        button_row.addWidget(self.settings_test_whisper_button)
         button_row.addStretch()
         button_row.addWidget(self.settings_button)
         panel_layout.addLayout(button_row)
@@ -2331,6 +2349,48 @@ class MainWindow(QMainWindow):
         self.update_settings_summary()
         self.log("Settings saved.")
 
+    def test_ollama_connection(self) -> None:
+        url = self.settings_ollama_url.text().strip().rstrip("/")
+        model = self.settings_ollama_model.text().strip()
+        if not url:
+            QMessageBox.warning(self, "Nova Notetaker", "Enter an Ollama URL before testing.")
+            return
+        try:
+            response = requests.get(f"{url}/api/tags", timeout=8)
+            response.raise_for_status()
+            models = [item.get("name", "") for item in response.json().get("models", []) if isinstance(item, dict)]
+            model_message = f"Model found: {model}" if model in models else f"Model not found: {model}"
+            if not model:
+                model_message = "No model selected."
+            QMessageBox.information(
+                self,
+                "Ollama Test",
+                f"Ollama is reachable.\n{model_message}\n\nAvailable models:\n{', '.join(models[:12]) or 'None reported'}",
+            )
+            self.log(f"Ollama test succeeded. {model_message}")
+        except Exception as error:
+            QMessageBox.warning(self, "Ollama Test", f"Ollama test failed:\n{error}")
+            self.log(f"Ollama test failed: {error}")
+
+    def test_whisperlive_connection(self) -> None:
+        url = self.settings_whisper_url.text().strip().rstrip("/")
+        if not url:
+            QMessageBox.warning(self, "Nova Notetaker", "Enter a WhisperLive URL before testing.")
+            return
+        try:
+            parsed = urlparse(url)
+            scheme = "wss" if parsed.scheme == "https" else "ws"
+            host = parsed.hostname or url.replace("http://", "").replace("https://", "")
+            port = parsed.port or (443 if scheme == "wss" else 80)
+            ws_url = f"{scheme}://{host}:{port}"
+            ws = websocket.create_connection(ws_url, timeout=8)
+            ws.close()
+            QMessageBox.information(self, "WhisperLive Test", f"WhisperLive WebSocket is reachable.\n{ws_url}")
+            self.log(f"WhisperLive test succeeded: {ws_url}")
+        except Exception as error:
+            QMessageBox.warning(self, "WhisperLive Test", f"WhisperLive test failed:\n{error}")
+            self.log(f"WhisperLive test failed: {error}")
+
     def update_settings_summary(self) -> None:
         mic_setting = self.settings["audio"].get("mic_device_name", "") or DEFAULT_MIC_DEVICE
         mic_name = "Windows default microphone" if mic_setting == DEFAULT_MIC_DEVICE else mic_setting or "No microphone selected"
@@ -2440,12 +2500,16 @@ class MainWindow(QMainWindow):
                 status = metadata.status
                 insights = load_or_build_insights(folder)
             except Exception:
+                metadata = None
                 date_text, time_text, title, status = "", "", folder.name, "unknown"
+
+            open_actions = sum(1 for item in insights.actions if item.status.lower() != "done")
+            review_count = len(insights.quality_warnings) + len(insights.warnings)
+            if not self._meeting_matches_filter(folder, metadata, status, open_actions, review_count):
+                continue
 
             row = self.meeting_table.rowCount()
             self.meeting_table.insertRow(row)
-            open_actions = sum(1 for item in insights.actions if item.status.lower() != "done")
-            review_count = len(insights.quality_warnings) + len(insights.warnings)
             values = [date_text, time_text, title, self._meeting_status_label(status, review_count), str(open_actions), str(review_count)]
             for column, value in enumerate(values):
                 item = SortableTableItem(value)
@@ -2478,6 +2542,29 @@ class MainWindow(QMainWindow):
         self.meeting_table.setColumnWidth(6, 150)
         if self.meeting_table.rowCount() and self._selected_meeting_folder() is None:
             self.meeting_table.selectRow(0)
+
+    def _meeting_matches_filter(
+        self,
+        folder: Path,
+        metadata: MeetingMetadata | None,
+        status: str,
+        open_actions: int,
+        review_count: int,
+    ) -> bool:
+        selected_filter = self.meeting_filter_combo.currentText() if hasattr(self, "meeting_filter_combo") else "All meetings"
+        if selected_filter == "Needs review":
+            return review_count > 0
+        if selected_filter == "Has open actions":
+            return open_actions > 0
+        if selected_filter == "Processed":
+            return status.startswith("processed")
+        if selected_filter == "No transcript":
+            transcript_path = folder / "transcript.md"
+            if not transcript_path.exists():
+                return True
+            transcript_text = transcript_path.read_text(encoding="utf-8", errors="ignore")
+            return not MeetingProcessor._usable_existing_transcript_text(transcript_text).strip()
+        return True
 
     def preview_selected_meeting(self) -> None:
         self.update_meeting_health()

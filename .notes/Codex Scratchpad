@@ -296,6 +296,43 @@ Potential future insight improvements:
 - Continue tightening the Ollama prompt if assignments still leak into Key Decisions in generated notes.
 - Consider adding a Settings diagnostics button later to test Ollama and WhisperLive connectivity/model availability directly.
 
+## 2026-05-26 Update - Latest Reprocess Review
+
+- Reviewed latest meeting folder:
+  - `meetings/2026-05-26_083001_daily-operations-checkpoint`
+  - System audio is valid: about 551.6 seconds, 48 kHz, 2 channels.
+  - Mic capture was intentionally muted and no mic WAV was expected.
+  - Reprocess mode was `notes_only`.
+
+- Reprocess quality:
+  - Notes were generated successfully with all required sections.
+  - The summary correctly captured two related network/security-camera incidents.
+  - Action item extraction found the change-record follow-up for IT Team.
+  - Important date extraction found the next-meeting reference.
+  - Remaining review warning is valid: one action item has an unknown due date.
+
+- Fixes implemented during this pass:
+  - Insights parser now ignores placeholder bullets like `None captured.` so they do not become fake decisions/actions/dates.
+  - Regenerated the latest meeting's `insights.json`; it now has 1 action, 0 decisions, 1 date.
+  - Meeting table now has a filter control:
+    - All meetings
+    - Needs review
+    - Has open actions
+    - Processed
+    - No transcript
+  - `No transcript` filter checks for usable transcript text, so mic-muted meetings with valid system transcript are not misclassified.
+  - Settings page now includes direct diagnostics buttons for Ollama and WhisperLive.
+  - Transcript cleanup now collapses incremental/repeated fragments before sending transcript text to the note generator.
+
+- Verification:
+  - `py_compile` passed for changed app/test files.
+  - Full relevant unit suite passed: 27 tests OK.
+
+- Suggested next design/product work:
+  - Add a "Needs review" visual badge style in the Meetings table instead of plain text/count only.
+  - Add a small "Open latest meeting" action on Live Capture after processing completes.
+  - Consider a transcript quality panel showing audio duration, transcription chunks, repeated-fragment cleanup count, and note-generation retry status.
+
 ## Communication Notes For ChatGPT / Design Team
 
 When giving design feedback, focus on:

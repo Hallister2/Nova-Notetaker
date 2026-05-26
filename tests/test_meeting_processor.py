@@ -118,6 +118,19 @@ class MeetingProcessorTests(unittest.TestCase):
 
             self.assertNotIn("Skipping AI notes because no transcript text is available yet.", metadata.processing["warnings"])
 
+    def test_cleanup_transcript_for_notes_collapses_incremental_repeats(self) -> None:
+        transcript = (
+            "# Transcript\n\n"
+            "## Meeting\n\n"
+            "Good morning. Good morning everyone. Good morning everyone welcome to daily ops. "
+            "The incident is resolved. The incident is resolved."
+        )
+
+        cleaned = MeetingProcessor._cleanup_transcript_for_notes(transcript)
+
+        self.assertNotIn("Good morning. Good morning everyone.", cleaned)
+        self.assertEqual(cleaned.count("The incident is resolved."), 1)
+
     @staticmethod
     def _write_silent_wav(path: Path) -> None:
         with wave.open(str(path), "wb") as wav_file:

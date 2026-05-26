@@ -111,3 +111,26 @@ class InsightsTests(TestCase):
 
             self.assertEqual(len(insights.decisions), 1)
             self.assertIn("orange accent", insights.decisions[0].text)
+
+    def test_none_captured_does_not_create_fake_insights(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            notes_path = Path(temp_dir) / "notes.md"
+            notes_path.write_text(
+                "\n".join(
+                    [
+                        "## Key Decisions",
+                        "- None captured.",
+                        "## Action Items",
+                        "- None captured.",
+                        "## Important Dates",
+                        "- None captured.",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            insights = build_insights_from_notes(notes_path)
+
+            self.assertEqual(insights.actions, [])
+            self.assertEqual(insights.decisions, [])
+            self.assertEqual(insights.dates, [])

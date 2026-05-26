@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from pathlib import Path
 import re
 from typing import Any, Callable
@@ -183,8 +184,8 @@ class MeetingProcessor:
             lines.append(raw_line)
         return "\n".join(lines).strip()
 
-    @staticmethod
-    def _cleanup_transcript_for_notes(transcript_text: str) -> str:
+    @classmethod
+    def _cleanup_transcript_for_notes(cls, transcript_text: str) -> str:
         cleaned_lines: list[str] = []
         for raw_line in transcript_text.splitlines():
             line = raw_line.strip()
@@ -193,14 +194,40 @@ class MeetingProcessor:
                 continue
             fragments = re.split(r"(?<=[.!?])\s+", line)
             deduped: list[str] = []
-            previous = ""
             for fragment in fragments:
-                normalized = re.sub(r"\s+", " ", fragment).strip().lower()
-                if normalized and normalized != previous:
-                    deduped.append(fragment)
-                previous = normalized
+                cls._append_clean_fragment(deduped, fragment)
             cleaned_lines.append(" ".join(deduped))
         return "\n".join(cleaned_lines).strip()
+
+    @classmethod
+    def _append_clean_fragment(cls, fragments: list[str], fragment: str) -> None:
+        normalized = cls._normalize_fragment(fragment)
+        if not normalized:
+            return
+        if not fragments:
+            fragments.append(fragment)
+            return
+
+        previous_normalized = cls._normalize_fragment(fragments[-1])
+        if normalized == previous_normalized:
+            return
+        if previous_normalized and previous_normalized in normalized:
+            fragments[-1] = fragment
+            return
+        if normalized in previous_normalized:
+            return
+        if SequenceMatcher(None, previous_normalized, normalized).ratio() >= 0.88:
+            if len(normalized) > len(previous_normalized):
+                fragments[-1] = fragment
+            return
+        fragments.append(fragment)
+
+    @staticmethod
+    def _normalize_fragment(text: str) -> str:
+        text = text.lower()
+        text = re.sub(r"[^a-z0-9\s]", " ", text)
+        text = re.sub(r"\s+", " ", text)
+        return text.strip()
 
     @staticmethod
     def _profile_prompt_context(metadata: MeetingMetadata) -> str:

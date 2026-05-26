@@ -92,6 +92,8 @@ def build_insights_from_notes(notes_path: Path) -> MeetingInsights:
         item_text = line.lstrip("- ").strip()
         if not item_text or item_text.startswith("_"):
             continue
+        if item_text.lower().rstrip(".") in {"none captured", "none"}:
+            continue
 
         if section == "actions":
             insights.actions.append(_parse_action(item_text))
