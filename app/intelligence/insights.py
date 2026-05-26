@@ -114,12 +114,19 @@ def read_insights_json(path: Path) -> MeetingInsights:
 
 def load_or_build_insights(folder: Path) -> MeetingInsights:
     json_path = folder / "insights.json"
+    notes_path = folder / "notes.md"
     if json_path.exists():
         try:
-            return read_insights_json(json_path)
+            if not notes_path.exists() or json_path.stat().st_mtime >= notes_path.stat().st_mtime:
+                return read_insights_json(json_path)
         except Exception:
             pass
-    return build_insights_from_notes(folder / "notes.md")
+    insights = build_insights_from_notes(notes_path)
+    try:
+        write_insights_json(folder, insights)
+    except Exception:
+        pass
+    return insights
 
 
 def _parse_action(text: str) -> InsightItem:

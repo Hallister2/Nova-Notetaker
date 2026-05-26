@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import os
 import tempfile
+import time
 from pathlib import Path
 from unittest import TestCase
 
-from app.intelligence.insights import build_insights_from_notes, read_insights_json, write_insights_json
+from app.intelligence.insights import build_insights_from_notes, load_or_build_insights, read_insights_json, write_insights_json
 
 
 class InsightsTests(TestCase):
@@ -51,3 +53,24 @@ class InsightsTests(TestCase):
 
             self.assertEqual(loaded.actions[0].owner, "Chad")
             self.assertEqual(loaded.actions[0].status, "open")
+
+    def test_rebuilds_when_notes_are_newer_than_insights_json(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            folder = Path(temp_dir)
+            notes_path = folder / "notes.md"
+            notes_path.write_text(
+                "## Action Items\n- Owner: Chad; Task: Old task; Due: Monday; Confidence: Medium",
+                encoding="utf-8",
+            )
+            write_insights_json(folder, build_insights_from_notes(notes_path))
+            notes_path.write_text(
+                "## Action Items\n- Owner: Maya; Task: New task; Due: Friday; Confidence: High",
+                encoding="utf-8",
+            )
+            newer_time = time.time() + 5
+            os.utime(notes_path, (newer_time, newer_time))
+
+            loaded = load_or_build_insights(folder)
+
+            self.assertEqual(loaded.actions[0].owner, "Maya")
+            self.assertEqual(loaded.actions[0].text, "New task")
