@@ -249,6 +249,68 @@ Potential improvements:
 - Stronger insight cards.
 - Larger visual emphasis on actions and decisions.
 
+## Realtime Transcription Direction
+
+Realtime or near-realtime transcription is considered realistically achievable with the current infrastructure.
+
+Current infrastructure strengths:
+
+- Local Windows audio capture.
+- Existing WhisperLive integration.
+- Existing self-hosted Unraid infrastructure.
+- Existing streaming/transcription pipeline concepts.
+
+Recommended target experience:
+
+- Near-realtime rolling transcript.
+- Approximate latency target between 2-8 seconds.
+
+The product should NOT attempt fully polished live AI meeting intelligence initially.
+
+Recommended phased rollout:
+
+Phase 1:
+
+- Live rolling transcript during recording.
+- Partial transcript updates.
+- Finalized transcript segments after confirmation.
+
+Phase 2:
+
+- Faster post-meeting summarization.
+- Improved insight extraction pipeline.
+
+Phase 3:
+
+- Experimental live insight detection.
+- Potential action-item detection during meetings.
+- Potential realtime review warnings.
+
+Current recommendation:
+
+- Keep realtime transcript as the first milestone.
+- Keep insight generation primarily post-processing for reliability.
+- Avoid noisy realtime insight spam.
+
+UX guidance:
+
+- Live transcript should feel calm and readable.
+- Partial transcript text should visually distinguish itself from finalized text.
+- Transcript updates should avoid jittery UI behavior.
+- Realtime transcript should feel premium, not noisy.
+
+The app should avoid feeling like:
+
+- Live debugging output.
+- Streaming console logs.
+- Captioning spam.
+
+The app should instead feel like:
+
+- Quiet live meeting awareness.
+- Ambient meeting intelligence.
+- Calm rolling context.
+
 ## Branding Notes
 
 Orange is the correct brand accent.
