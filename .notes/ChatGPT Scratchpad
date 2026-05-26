@@ -530,7 +530,7 @@ Current realistic recommendation:
 
 - Speaker diarization rather than full Teams identity awareness.
 
-Recommended near-term UX:
+Recommended future diarization UX:
 
 - Speaker 1.
 - Speaker 2.
@@ -538,14 +538,10 @@ Recommended near-term UX:
 - You.
 - Meeting Audio.
 
-Potential future enhancement:
+Implemented interim UX:
 
-- Allow post-meeting speaker renaming.
-
-Example:
-
-- Speaker 1 -> Maya
-- Speaker 2 -> Alex
+- Post-meeting speaker rename aliases are available for transcript display.
+- Aliases are stored per meeting and do not rewrite raw transcripts.
 
 This preserves:
 
@@ -708,9 +704,7 @@ Additional recommended priorities:
 - Add smoother transitions.
 - Reduce visible infrastructure complexity.
 
-## Design System Recommendation
-
-The project is reaching the point where a formal design system is recommended.
+## Design System Status
 
 Design system exists at `.notes/UI Design System`. Potential areas to keep refining:
 
@@ -725,7 +719,7 @@ Design system exists at `.notes/UI Design System`. Potential areas to keep refin
 - Animation timing.
 - Density rules.
 
-Without standardization, long-term UI consistency may degrade as the application grows.
+Keep the design system current as pages split out of `main_window.py` and new workflows are added.
 
 ## UX Philosophy
 

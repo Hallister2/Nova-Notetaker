@@ -343,10 +343,8 @@ Potential future insight improvements:
   - `py_compile` passed for changed app/test files.
   - Full relevant unit suite passed: 27 tests OK.
 
-- Suggested next design/product work:
-  - Add a "Needs review" visual badge style in the Meetings table instead of plain text/count only.
-  - Add a small "Open latest meeting" action on Live Capture after processing completes.
-  - Consider a transcript quality panel showing audio duration, transcription chunks, repeated-fragment cleanup count, and note-generation retry status.
+- Follow-up item still relevant:
+  - Consider expanding the transcript quality panel with transcription chunks, repeated-fragment cleanup count, and note-generation retry status.
 
 ## 2026-05-26 Update - Product Polish Pass
 
