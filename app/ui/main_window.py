@@ -44,7 +44,7 @@ from app.audio.device_manager import AudioDevice, AudioDeviceManager
 from app.core.profiles import MeetingProfile, ProfileStore
 from app.core.settings import load_settings, save_settings
 from app.core.templates import NoteTemplate, TemplateStore
-from app.intelligence.insights import InsightItem, MeetingInsights, load_or_build_insights
+from app.intelligence.insights import InsightItem, MeetingInsights, load_or_build_insights, write_insights_json
 from app.storage.meeting_store import MeetingMetadata, MeetingStore
 from app.ui.orb_widget import OrbWidget
 from app.ui.styles import THEME_LABELS, build_stylesheet
@@ -698,8 +698,8 @@ class MainWindow(QMainWindow):
         meetings_panel_layout.setContentsMargins(18, 18, 18, 18)
         meetings_title = QLabel("Meetings")
         meetings_title.setObjectName("Title")
-        self.meeting_table = QTableWidget(0, 5)
-        self.meeting_table.setHorizontalHeaderLabels(["Date", "Time", "Meeting Name", "Status", "Open"])
+        self.meeting_table = QTableWidget(0, 7)
+        self.meeting_table.setHorizontalHeaderLabels(["Date", "Time", "Meeting Name", "Status", "Actions", "Review", "Open"])
         self.meeting_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.meeting_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.meeting_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -711,8 +711,10 @@ class MainWindow(QMainWindow):
         header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(2, QHeaderView.Stretch)
         header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(4, QHeaderView.Fixed)
-        self.meeting_table.setColumnWidth(4, 150)
+        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(6, QHeaderView.Fixed)
+        self.meeting_table.setColumnWidth(6, 150)
         archive_buttons = QHBoxLayout()
         self.refresh_meetings_button = QPushButton("Refresh")
         self.refresh_meetings_button.clicked.connect(self.refresh_meetings)
@@ -1656,6 +1658,7 @@ class MainWindow(QMainWindow):
         if item.kind == "action":
             badge_values.append((item.owner, "owner"))
             badge_values.append((item.due_date, "date"))
+            badge_values.append((item.status, "state"))
         elif item.kind == "date":
             badge_values.append((item.due_date, "date"))
         badge_values.append((item.confidence, f"confidence-{item.confidence.lower()}"))
@@ -2339,22 +2342,28 @@ class MainWindow(QMainWindow):
         self.meeting_table.setSortingEnabled(False)
         self.meeting_table.setRowCount(0)
         for folder in self.meeting_store.list_meetings():
+            insights = MeetingInsights()
             try:
                 metadata = self.meeting_store.read_metadata(folder)
                 date_text, time_text = self._split_started_at(metadata.started_at)
                 title = metadata.title or folder.name
                 status = metadata.status
+                insights = load_or_build_insights(folder)
             except Exception:
                 date_text, time_text, title, status = "", "", folder.name, "unknown"
 
             row = self.meeting_table.rowCount()
             self.meeting_table.insertRow(row)
-            values = [date_text, time_text, title, status]
+            open_actions = sum(1 for item in insights.actions if item.status.lower() != "done")
+            review_count = len(insights.quality_warnings) + len(insights.warnings)
+            values = [date_text, time_text, title, self._meeting_status_label(status, review_count), str(open_actions), str(review_count)]
             for column, value in enumerate(values):
                 item = SortableTableItem(value)
                 item.setData(Qt.UserRole, str(folder))
-                item.setData(Qt.UserRole + 1, self._meeting_sort_key(column, date_text, time_text, title, status))
+                item.setData(Qt.UserRole + 1, self._meeting_sort_key(column, date_text, time_text, title, status, open_actions, review_count))
                 if column in (0, 1):
+                    item.setTextAlignment(Qt.AlignCenter)
+                if column in (4, 5):
                     item.setTextAlignment(Qt.AlignCenter)
                 self.meeting_table.setItem(row, column, item)
 
@@ -2367,8 +2376,8 @@ class MainWindow(QMainWindow):
             open_item = SortableTableItem("")
             open_item.setData(Qt.UserRole, str(folder))
             open_item.setData(Qt.UserRole + 1, "")
-            self.meeting_table.setItem(row, 4, open_item)
-            self.meeting_table.setCellWidget(row, 4, open_button)
+            self.meeting_table.setItem(row, 6, open_item)
+            self.meeting_table.setCellWidget(row, 6, open_button)
             self.meeting_table.setRowHeight(row, 38)
 
             if current_folder and folder == current_folder:
@@ -2376,7 +2385,7 @@ class MainWindow(QMainWindow):
 
         self.meeting_table.setSortingEnabled(True)
         self.meeting_table.sortItems(0, Qt.DescendingOrder)
-        self.meeting_table.setColumnWidth(4, 150)
+        self.meeting_table.setColumnWidth(6, 150)
         if self.meeting_table.rowCount() and self._selected_meeting_folder() is None:
             self.meeting_table.selectRow(0)
 
@@ -2499,8 +2508,8 @@ class MainWindow(QMainWindow):
                 warning_layout.addWidget(self._muted_label(f"- {warning}"))
             details_layout.addWidget(warning_card)
 
+        details_layout.addWidget(self._overview_action_items_card(folder, insights))
         for title_text, items in (
-            ("Action items", insights.actions),
             ("Key decisions", insights.decisions),
             ("Scheduling details", insights.dates),
         ):
@@ -2517,6 +2526,48 @@ class MainWindow(QMainWindow):
         layout.addLayout(content, stretch=1)
         self._fit_dialog_to_available_screen(dialog, preferred_width=1180, preferred_height=760)
         dialog.show()
+
+    def _overview_action_items_card(self, folder: Path, insights: MeetingInsights) -> QFrame:
+        card = QFrame()
+        card.setObjectName("RaisedPanel")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(9)
+        header = QHBoxLayout()
+        label = QLabel("Action items")
+        label.setObjectName("SectionTitle")
+        count_label = QLabel(str(len(insights.actions)))
+        count_label.setObjectName("OrangeText")
+        header.addWidget(label)
+        header.addStretch()
+        header.addWidget(count_label)
+        layout.addLayout(header)
+
+        if not insights.actions:
+            layout.addWidget(self._muted_label("- None detected"))
+            return card
+
+        for index, item in enumerate(insights.actions[:8]):
+            row = self._insight_item_widget(item)
+            status_combo = QComboBox()
+            status_combo.addItems(["open", "in progress", "done", "deferred"])
+            status_combo.setCurrentText(item.status or "open")
+            status_combo.setToolTip("Update action item status")
+            status_combo.currentTextChanged.connect(
+                lambda status, action_index=index, meeting_folder=folder: self._update_action_status(meeting_folder, action_index, status)
+            )
+            row.layout().addWidget(status_combo)
+            layout.addWidget(row)
+        return card
+
+    def _update_action_status(self, folder: Path, action_index: int, status: str) -> None:
+        insights = load_or_build_insights(folder)
+        if action_index >= len(insights.actions):
+            return
+        insights.actions[action_index].status = status
+        write_insights_json(folder, insights)
+        self.refresh_meetings()
+        self.log(f"Updated action status to {status}: {folder.name}")
 
     @staticmethod
     def _notes_for_display(notes_path: Path) -> str:
@@ -2716,7 +2767,21 @@ class MainWindow(QMainWindow):
             return parts[0], parts[1] if len(parts) > 1 else ""
 
     @staticmethod
-    def _meeting_sort_key(column: int, date_text: str, time_text: str, title: str, status: str) -> str:
+    def _meeting_status_label(status: str, review_count: int) -> str:
+        if review_count:
+            return f"{status} / needs review"
+        return status
+
+    @staticmethod
+    def _meeting_sort_key(
+        column: int,
+        date_text: str,
+        time_text: str,
+        title: str,
+        status: str,
+        open_actions: int = 0,
+        review_count: int = 0,
+    ) -> str:
         full_timestamp = f"{date_text} {time_text}".strip()
         if column == 0:
             return full_timestamp
@@ -2726,6 +2791,10 @@ class MainWindow(QMainWindow):
             return title.lower()
         if column == 3:
             return status.lower()
+        if column == 4:
+            return f"{open_actions:06d}"
+        if column == 5:
+            return f"{review_count:06d}"
         return ""
 
     def _format_health_summary(self, metadata: MeetingMetadata) -> str:

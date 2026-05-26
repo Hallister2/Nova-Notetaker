@@ -23,6 +23,17 @@ class InsightItem:
     context: str = ""
 
     @property
+    def stable_key(self) -> str:
+        return "|".join(
+            [
+                self.kind.lower(),
+                self.owner.strip().lower(),
+                self.due_date.strip().lower(),
+                re.sub(r"\s+", " ", self.text.strip().lower()),
+            ]
+        )
+
+    @property
     def display_text(self) -> str:
         if self.kind == "action":
             owner = self.owner or "Unknown"
@@ -85,7 +96,9 @@ def build_insights_from_notes(notes_path: Path) -> MeetingInsights:
         if section == "actions":
             insights.actions.append(_parse_action(item_text))
         elif section == "decisions":
-            insights.decisions.append(_parse_decision(item_text))
+            decision = _parse_decision(item_text)
+            if decision:
+                insights.decisions.append(decision)
         elif section == "dates":
             insights.dates.append(_parse_date(item_text))
         elif section == "warnings":
@@ -99,6 +112,20 @@ def write_insights_json(folder: Path, insights: MeetingInsights) -> Path:
     path = folder / "insights.json"
     path.write_text(json.dumps(insights.to_dict(), indent=2), encoding="utf-8")
     return path
+
+
+def write_insights_preserving_statuses(folder: Path, insights: MeetingInsights) -> Path:
+    existing_path = folder / "insights.json"
+    if existing_path.exists():
+        try:
+            previous = read_insights_json(existing_path)
+            status_by_key = {item.stable_key: item.status for item in previous.actions}
+            for item in insights.actions:
+                if item.stable_key in status_by_key:
+                    item.status = status_by_key[item.stable_key]
+        except Exception:
+            pass
+    return write_insights_json(folder, insights)
 
 
 def read_insights_json(path: Path) -> MeetingInsights:
@@ -123,7 +150,7 @@ def load_or_build_insights(folder: Path) -> MeetingInsights:
             pass
     insights = build_insights_from_notes(notes_path)
     try:
-        write_insights_json(folder, insights)
+        write_insights_preserving_statuses(folder, insights)
     except Exception:
         pass
     return insights
@@ -142,11 +169,14 @@ def _parse_action(text: str) -> InsightItem:
     )
 
 
-def _parse_decision(text: str) -> InsightItem:
+def _parse_decision(text: str) -> InsightItem | None:
     fields = _field_map(text)
+    decision_text = fields.get("decision") or fields.get("context") or _strip_known_fields(text)
+    if _looks_like_assignment(decision_text):
+        return None
     return InsightItem(
         kind="decision",
-        text=fields.get("decision") or fields.get("context") or _strip_known_fields(text),
+        text=decision_text,
         source=fields.get("source", ""),
         confidence=_normalize_confidence(fields.get("confidence", "")),
     )
@@ -179,6 +209,20 @@ def _field_map(text: str) -> dict[str, str]:
 def _strip_known_fields(text: str) -> str:
     text = re.sub(r"\b(Owner|Task|Due|Date|Context|Source|Confidence|Decision):\s*", "", text, flags=re.IGNORECASE)
     return " ".join(part.strip() for part in text.split(";") if part.strip())
+
+
+def _looks_like_assignment(text: str) -> bool:
+    lowered = text.lower()
+    decision_markers = ("decided", "decision", "agreed", "approved", "rejected", "keep ", "remain ", "not switching")
+    if any(marker in lowered for marker in decision_markers):
+        return False
+    assignment_markers = (
+        r"\b[A-Z][a-z]+\s+to\s+\w+",
+        r"\bby\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|march|april|may|june|july|august|september|october|november|december)\b",
+        r"\bwill own\b",
+        r"\bplease\b",
+    )
+    return any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in assignment_markers)
 
 
 def _plain_note_text(text: str) -> str:

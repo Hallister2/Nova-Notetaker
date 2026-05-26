@@ -1,6 +1,6 @@
 # Codex Scratchpad
 
-Last updated: 2026-05-25
+Last updated: 2026-05-26
 
 Purpose: This is the working handoff between Codex, Chad, ChatGPT, and any design/product thinking around Nova Notetaker. Keep this file current with project status, design choices, implementation decisions, known issues, and open questions.
 
@@ -48,6 +48,8 @@ Current infrastructure assumptions:
 - Meeting insights are now structured.
   - `insights.json` is generated for newly processed/reprocessed meetings.
   - Existing meetings without `insights.json` can still be parsed from `notes.md`.
+  - `insights.json` is rebuilt when `notes.md` is newer, while preserving matching action-item statuses.
+  - Decision parsing filters obvious assignment/deadline bullets so the overview does not treat every commitment as a decision.
 
 - Meeting profiles are implemented and editable.
   - Profiles live in `config/profiles.json`.
@@ -105,7 +107,7 @@ Current UI structure:
 
 - Meetings page:
   - Clean table/index only.
-  - Date, time, meeting name, status, and Open meeting action.
+  - Date, time, meeting name, status, open action count, review count, and Open meeting action.
   - Selected meetings can be deleted.
   - Opening a meeting launches a separate overview window.
 
@@ -185,12 +187,15 @@ Source was removed from visible notes and insight cards because it added clutter
 Current action state:
 
 - Structured action items default to `open`.
-- UI displays status minimally.
-- Editing action state is not implemented yet.
+- Meeting Overview action cards now include a status selector:
+  - open
+  - in progress
+  - done
+  - deferred
+- Status changes are saved back to `insights.json`.
 
 Potential future insight improvements:
 
-- Allow users to mark action items as Done, Deferred, or In progress.
 - Add filters for Low Confidence, Unknown Owner, Unknown Due Date.
 - Add a compact “Needs review” count on the Meetings table.
 - Add click-to-jump from insight item to the relevant note section.
@@ -258,13 +263,20 @@ Potential future insight improvements:
 
 ## Last Verified State
 
-- Last code verification: 2026-05-25.
-- `app/ui/main_window.py` compiled after the Reprocess profile/template changes.
-- Full test suite passed after the transcript reprocess fix:
-  - 19 tests OK.
+- Last code verification: 2026-05-26.
+- Full test suite passed after the meeting-intelligence pass:
+  - 22 tests OK.
 - Most recent bug fixed:
-  - Notes-only reprocess now accepts transcripts where one source is pending but another source contains real text.
-  - This matters for mic-muted/system-audio-only recordings.
+  - Notes-only reprocess accepts transcripts where one source is pending but another source contains real text.
+  - Stale `insights.json` is rebuilt when notes are newer.
+  - Action statuses survive insight rebuilds when the action still matches.
+
+## Current Next Recommendations
+
+- Screenshot-review the Meeting Overview after the new action status controls.
+- Consider moving Meeting Overview from a popout-only experience to a primary in-app workspace.
+- Add filtering/sorting on the Meetings table for open actions and review count.
+- Continue tightening the Ollama prompt if assignments still leak into Key Decisions in generated notes.
 
 ## Communication Notes For ChatGPT / Design Team
 

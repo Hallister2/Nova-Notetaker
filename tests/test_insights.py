@@ -74,3 +74,40 @@ class InsightsTests(TestCase):
 
             self.assertEqual(loaded.actions[0].owner, "Maya")
             self.assertEqual(loaded.actions[0].text, "New task")
+
+    def test_rebuild_preserves_action_statuses(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            folder = Path(temp_dir)
+            notes_path = folder / "notes.md"
+            notes_path.write_text(
+                "## Action Items\n- Owner: Chad; Task: Verify memory limit; Due: Monday; Confidence: Medium",
+                encoding="utf-8",
+            )
+            insights = build_insights_from_notes(notes_path)
+            insights.actions[0].status = "done"
+            write_insights_json(folder, insights)
+            newer_time = time.time() + 5
+            os.utime(notes_path, (newer_time, newer_time))
+
+            loaded = load_or_build_insights(folder)
+
+            self.assertEqual(loaded.actions[0].status, "done")
+
+    def test_decision_parser_skips_assignment_bullets(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            notes_path = Path(temp_dir) / "notes.md"
+            notes_path.write_text(
+                "\n".join(
+                    [
+                        "## Key Decisions",
+                        "- Product dashboard: Maya to update log by Thursday, May 28th.",
+                        "- Decision: Keep current orange accent for this release.",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            insights = build_insights_from_notes(notes_path)
+
+            self.assertEqual(len(insights.decisions), 1)
+            self.assertIn("orange accent", insights.decisions[0].text)

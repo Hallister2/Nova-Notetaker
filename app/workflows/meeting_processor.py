@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from typing import Any, Callable
 
 from app.audio.audio_validation import inspect_wav
@@ -111,6 +112,7 @@ class MeetingProcessor:
             notes_path = self.meeting_store.write_notes_stub(folder, metadata, transcript_path, warnings)
         elif settings.get("ai", {}).get("provider", "ollama") == "ollama":
             on_status("Generating notes with Ollama")
+            transcript_text = self._cleanup_transcript_for_notes(transcript_text)
             notes_result = OllamaClient(settings).generate_meeting_notes(
                 transcript_text,
                 profile_context=self._profile_prompt_context(metadata),
@@ -177,6 +179,25 @@ class MeetingProcessor:
                 continue
             lines.append(raw_line)
         return "\n".join(lines).strip()
+
+    @staticmethod
+    def _cleanup_transcript_for_notes(transcript_text: str) -> str:
+        cleaned_lines: list[str] = []
+        for raw_line in transcript_text.splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                cleaned_lines.append(raw_line)
+                continue
+            fragments = re.split(r"(?<=[.!?])\s+", line)
+            deduped: list[str] = []
+            previous = ""
+            for fragment in fragments:
+                normalized = re.sub(r"\s+", " ", fragment).strip().lower()
+                if normalized and normalized != previous:
+                    deduped.append(fragment)
+                previous = normalized
+            cleaned_lines.append(" ".join(deduped))
+        return "\n".join(cleaned_lines).strip()
 
     @staticmethod
     def _profile_prompt_context(metadata: MeetingMetadata) -> str:
