@@ -36,6 +36,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "use_vad": True,
         "cross_bleed_cleanup": True,
         "timeout_seconds": 120,
+        "long_audio_chunk_seconds": 180,
     },
     "storage": {
         "meetings_dir": "meetings",

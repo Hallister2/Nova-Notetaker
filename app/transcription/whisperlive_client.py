@@ -6,6 +6,7 @@ from typing import Any
 from urllib.parse import urlparse
 from threading import Event, Thread
 import json
+import tempfile
 import time
 import uuid
 import wave
@@ -33,6 +34,7 @@ class WhisperLiveClient:
         self.timeout_seconds = int(transcription.get("timeout_seconds", 120))
         self.language = str(transcription.get("language", "en"))
         self.use_vad = bool(transcription.get("use_vad", True))
+        self.long_audio_chunk_seconds = int(transcription.get("long_audio_chunk_seconds", 180))
 
     def transcribe_file(self, audio_path: Path, source: str) -> TranscriptionResult:
         if not self.enabled:
@@ -58,7 +60,12 @@ class WhisperLiveClient:
             )
 
         try:
-            text = self._transcribe_wav_over_websocket(audio_path)
+            duration_seconds = self._wav_duration_seconds(audio_path)
+            if duration_seconds > self.long_audio_chunk_seconds:
+                text, chunk_warnings = self._transcribe_long_wav(audio_path, duration_seconds)
+            else:
+                text = self._transcribe_wav_with_retries(audio_path)
+                chunk_warnings = []
             if not text:
                 return TranscriptionResult(
                     source=source,
@@ -66,7 +73,8 @@ class WhisperLiveClient:
                     success=False,
                     warning=f"WhisperLive connected for {source}, but no speech text was returned.",
                 )
-            return TranscriptionResult(source=source, text=text, success=True)
+            warning = "; ".join(chunk_warnings) if chunk_warnings else None
+            return TranscriptionResult(source=source, text=text, success=True, warning=warning)
         except Exception as error:
             return TranscriptionResult(
                 source=source,
@@ -74,6 +82,68 @@ class WhisperLiveClient:
                 success=False,
                 warning=f"WhisperLive transcription failed for {source}: {error}",
             )
+
+    def _transcribe_long_wav(self, audio_path: Path, duration_seconds: float) -> tuple[str, list[str]]:
+        texts: list[str] = []
+        warnings: list[str] = []
+        with tempfile.TemporaryDirectory(prefix="nova_whisper_chunks_") as temp_dir:
+            chunk_paths = self._split_wav(audio_path, Path(temp_dir), self.long_audio_chunk_seconds)
+            for index, chunk_path in enumerate(chunk_paths, start=1):
+                try:
+                    text = self._transcribe_wav_with_retries(chunk_path)
+                    if text.strip():
+                        texts.append(text.strip())
+                    else:
+                        warnings.append(f"WhisperLive returned no text for chunk {index}/{len(chunk_paths)}.")
+                except Exception as error:
+                    warnings.append(f"WhisperLive failed for chunk {index}/{len(chunk_paths)}: {error}")
+        if not texts and warnings:
+            raise RuntimeError("; ".join(warnings))
+        if duration_seconds:
+            warnings.insert(0, f"Long recording transcribed in {len(chunk_paths)} chunk(s).")
+        return " ".join(texts).strip(), warnings
+
+    def _transcribe_wav_with_retries(self, audio_path: Path) -> str:
+        attempts = 2
+        last_error: Exception | None = None
+        for attempt in range(1, attempts + 1):
+            try:
+                return self._transcribe_wav_over_websocket(audio_path)
+            except Exception as error:
+                last_error = error
+                if attempt < attempts:
+                    time.sleep(2)
+        raise RuntimeError(str(last_error) if last_error else "Unknown WhisperLive error")
+
+    @staticmethod
+    def _wav_duration_seconds(audio_path: Path) -> float:
+        with wave.open(str(audio_path), "rb") as wav_file:
+            frame_rate = wav_file.getframerate()
+            frame_count = wav_file.getnframes()
+            return frame_count / float(frame_rate) if frame_rate else 0.0
+
+    @staticmethod
+    def _split_wav(audio_path: Path, output_dir: Path, chunk_seconds: int) -> list[Path]:
+        paths: list[Path] = []
+        with wave.open(str(audio_path), "rb") as source:
+            channels = source.getnchannels()
+            sample_width = source.getsampwidth()
+            frame_rate = source.getframerate()
+            frames_per_chunk = max(1, int(frame_rate * chunk_seconds))
+            index = 1
+            while True:
+                data = source.readframes(frames_per_chunk)
+                if not data:
+                    break
+                chunk_path = output_dir / f"chunk_{index:03}.wav"
+                with wave.open(str(chunk_path), "wb") as chunk:
+                    chunk.setnchannels(channels)
+                    chunk.setsampwidth(sample_width)
+                    chunk.setframerate(frame_rate)
+                    chunk.writeframes(data)
+                paths.append(chunk_path)
+                index += 1
+        return paths
 
     def _transcribe_wav_over_websocket(self, audio_path: Path) -> str:
         parsed = urlparse(self.url)

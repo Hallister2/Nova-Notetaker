@@ -1,7 +1,7 @@
 {
   "app": {
     "name": "Nova Notetaker",
-    "theme": "executive_dark"
+    "theme": "modern_gradient"
   },
   "audio": {
     "mic_device_name": "__default_microphone__",
@@ -25,7 +25,8 @@
     "language": "en",
     "use_vad": true,
     "cross_bleed_cleanup": true,
-    "timeout_seconds": 120
+    "timeout_seconds": 120,
+    "long_audio_chunk_seconds": 180
   },
   "storage": {
     "meetings_dir": "meetings"

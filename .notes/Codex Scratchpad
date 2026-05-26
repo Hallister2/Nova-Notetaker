@@ -1,0 +1,230 @@
+# Codex Scratchpad
+
+Last updated: 2026-05-25
+
+Purpose: This is the working handoff between Codex, Chad, ChatGPT, and any design/product thinking around Nova Notetaker. Keep this file current with project status, design choices, implementation decisions, known issues, and open questions.
+
+## Project Status
+
+Nova Notetaker is a native Windows desktop app built with Python and PySide6. It passively captures meeting audio from the local machine rather than joining Teams or using a Teams admin integration.
+
+Current core flow:
+
+- Capture system/output audio through WASAPI loopback.
+- Optionally capture microphone audio.
+- Save raw audio into a timestamped meeting folder.
+- Transcribe audio through self-hosted WhisperLive.
+- Generate notes through self-hosted Ollama.
+- Write `notes.md`, `transcript.md`, `metadata.json`, and now `insights.json`.
+- Review saved meetings from the Meetings tab.
+- Open a selected meeting in a separate overview window.
+
+Current infrastructure assumptions:
+
+- WhisperLive runs on Chad's internal Unraid server.
+- Ollama runs on Chad's internal Unraid server.
+- Kokoro FastAPI and n8n exist internally but are not core dependencies yet.
+- The app is intended to work passively with Teams, browser audio, YouTube test audio, or any Windows system output.
+
+## Recent Engineering Decisions
+
+- System audio now defaults to `Windows default output`.
+  - This avoids stale output-device selection when Windows switches between laptop speakers, Realtek output, AirPods, etc.
+  - The app resolves the active WASAPI loopback at recording start.
+
+- Microphone capture now defaults to `Windows default microphone`.
+  - If Windows reports the default mic through a less ideal/truncated device name, Nova tries to prefer the matching visible WASAPI mic.
+
+- Mic capture can be muted explicitly.
+  - The UI state is `Mic ON` or `Mic MUTED`.
+  - When muted, `mic.wav` is intentionally skipped.
+
+- Long WhisperLive transcriptions are chunked.
+  - Long recordings are split into temporary WAV chunks.
+  - Default chunk size is 180 seconds.
+  - Each chunk gets a separate WhisperLive WebSocket connection with retry.
+  - This is intended to reduce `[WinError 10053]` connection abort failures on 10+ minute recordings.
+
+- Meeting insights are now structured.
+  - `insights.json` is generated for newly processed/reprocessed meetings.
+  - Existing meetings without `insights.json` can still be parsed from `notes.md`.
+
+## UI / Design Direction
+
+The current design direction is a corporate dark executive dashboard, not a sci-fi HUD.
+
+Primary design language:
+
+- Matte dark surfaces.
+- Restrained orange accents.
+- Practical enterprise dashboard layout.
+- Clear hierarchy over visual spectacle.
+- Minimal glow, mostly reserved for the Nova orb/status identity.
+
+Current UI structure:
+
+- Left sidebar navigation:
+  - Live Capture
+  - Meetings
+  - Logs
+  - Templates
+  - Settings
+
+- Live Capture page:
+  - Header with theme toggle and Start Recording.
+  - Meeting status card.
+  - Audio levels.
+  - Mic state pill.
+  - Live transcript panel.
+  - Action bar.
+  - Meeting Insights rail.
+
+- Meetings page:
+  - Clean table/index only.
+  - Date, time, meeting name, status, and Open meeting action.
+  - Selected meetings can be deleted.
+  - Opening a meeting launches a separate overview window.
+
+- Meeting overview popout:
+  - Rendered notes on the left.
+  - Details and structured insights on the right.
+  - Popout windows close when the main app closes.
+  - Popouts are screen-aware and should stay inside the available display.
+
+## Theme System
+
+Three themes are implemented:
+
+- Executive Dark
+  - Current/default theme.
+  - Deep charcoal, refined orange, professional and focused.
+
+- Clean Professional
+  - Light theme.
+  - Intended for office/client/all-day use.
+
+- Modern Gradient
+  - More colorful, navy/indigo/orange direction.
+  - Intended to feel innovative while still business-safe.
+
+Theme switching:
+
+- Three-way toggle at the top of Live Capture:
+  - Dark
+  - Light
+  - Colorful
+- Theme preference is saved in `config/settings.json`.
+- Meeting overview popouts inherit the active theme.
+
+Design team note:
+
+- Light and Gradient themes are functional but likely need a visual polish pass after screenshot review.
+- Watch text contrast in Markdown previews, tables, disabled controls, and badges.
+
+## Insights Design
+
+Current insight types:
+
+- Action items
+- Key decisions
+- Scheduling details / dates
+- Review needed / quality warnings
+
+Insight fields:
+
+- Owner
+- Due date
+- Confidence
+- Status
+- Context/text
+
+Source was removed from visible notes and insight cards because it added clutter without enough value for the current UI.
+
+Current action state:
+
+- Structured action items default to `open`.
+- UI displays status minimally.
+- Editing action state is not implemented yet.
+
+Potential future insight improvements:
+
+- Allow users to mark action items as Done, Deferred, or In progress.
+- Add filters for Low Confidence, Unknown Owner, Unknown Due Date.
+- Add a compact “Needs review” count on the Meetings table.
+- Add click-to-jump from insight item to the relevant note section.
+- Eventually add calendar export through Outlook or n8n.
+
+## Known Issues / Watch Items
+
+- WhisperLive may still fail on long meetings if the server is overloaded.
+  - Chunking should reduce total failure risk.
+  - If failures continue, try shorter chunk size such as 60 or 90 seconds.
+
+- Laptop speakers plus integrated mic can create bleed/confusion.
+  - Current workaround is mic mute on laptop.
+  - Better long-term solutions may include audio routing guidance, headset mode, or echo cancellation research.
+
+- True speaker diarization is not solved.
+  - Current minimum reliable distinction is `You` versus `Meeting/System Audio`.
+
+- Meeting overview layout is improving but should keep being screenshot-tested.
+  - Especially on laptop screens, high Windows scaling, and multi-monitor setups.
+
+- The legacy `_build_legacy_ui` code still exists in `main_window.py`.
+  - It is not called, but it creates noise when searching the file.
+  - Cleanup/refactor pass recommended once UI stabilizes.
+
+## Open Product / Design Questions
+
+- Should the Meeting Overview be a popout window, a full page inside the app, or both?
+- Should the app show live partial transcript while recording, or only after processing?
+- Should insights appear only after processing, or should we show “capture/transcription state” cards while recording?
+- What is the right visual weight for the Nova orb?
+  - Current orb is brand/status flavor.
+  - It should not overpower the business dashboard.
+
+- Should action item state be local-only, or synced/exported somewhere?
+  - Local-only is simpler.
+  - n8n/Outlook/Planner integration would make it more useful.
+
+- Should calendar extraction create real events automatically, or require user approval?
+  - Recommendation: always require review/approval before calendar creation.
+
+- Should `Source` be fully removed from generated notes, or kept in `insights.json` only?
+  - Current decision: hidden from UI and new notes, but still supported in parser for older notes.
+
+- What should Templates become?
+  - Possible direction: note style presets such as Executive Summary, Technical Standup, Project Sync, Sales Call, Incident Review.
+
+## Next Useful Implementation Ideas
+
+- Add a small “Reprocess selected” batch mode for multiple meetings.
+- Add an “Open latest meeting” quick action on Live Capture.
+- Add quality badges to the Meetings table:
+  - Processed
+  - Warnings
+  - Needs review
+  - No transcript
+
+- Add an `insights.json` backfill command for old meetings.
+- Remove unused legacy UI code from `main_window.py`.
+- Add screenshot-based UI QA notes for the three themes.
+- Add calendar export placeholder wiring through n8n or Outlook later.
+
+## Communication Notes For ChatGPT / Design Team
+
+When giving design feedback, focus on:
+
+- Visual hierarchy.
+- Readability at 1366x768 and laptop scale.
+- Whether the insights rail feels helpful or crowded.
+- Whether Light and Colorful themes feel professional enough.
+- How much Nova brand personality is appropriate without feeling like a sci-fi assistant.
+
+When giving product feedback, focus on:
+
+- How a user starts/stops capture.
+- How confidently the app communicates recording/transcription status.
+- How users review and act on previous meetings.
+- Whether the overview popout or an in-app overview page is the better long-term design.
+

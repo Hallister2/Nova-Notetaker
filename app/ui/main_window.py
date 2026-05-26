@@ -725,6 +725,9 @@ class MainWindow(QMainWindow):
         self.settings_transcription_timeout = QSpinBox()
         self.settings_transcription_timeout.setRange(10, 1800)
         self.settings_transcription_timeout.setValue(int(self.settings["transcription"].get("timeout_seconds", 120)))
+        self.settings_long_audio_chunk_seconds = QSpinBox()
+        self.settings_long_audio_chunk_seconds.setRange(60, 600)
+        self.settings_long_audio_chunk_seconds.setValue(int(self.settings["transcription"].get("long_audio_chunk_seconds", 180)))
 
         form.addRow("Microphone", self.settings_mic_combo)
         form.addRow("System audio", self.settings_loopback_combo)
@@ -740,6 +743,7 @@ class MainWindow(QMainWindow):
         form.addRow("Voice activity detection", self.settings_use_vad)
         form.addRow("Transcript cleanup", self.settings_cross_bleed_cleanup)
         form.addRow("Transcription timeout", self.settings_transcription_timeout)
+        form.addRow("Long recording chunk size", self.settings_long_audio_chunk_seconds)
         panel_layout.addLayout(form)
 
         button_row = QHBoxLayout()
@@ -1602,6 +1606,7 @@ class MainWindow(QMainWindow):
         self.settings["transcription"]["use_vad"] = self.settings_use_vad.isChecked()
         self.settings["transcription"]["cross_bleed_cleanup"] = self.settings_cross_bleed_cleanup.isChecked()
         self.settings["transcription"]["timeout_seconds"] = self.settings_transcription_timeout.value()
+        self.settings["transcription"]["long_audio_chunk_seconds"] = self.settings_long_audio_chunk_seconds.value()
         save_settings(self.settings)
         self.update_settings_summary()
         self.log("Settings saved.")
