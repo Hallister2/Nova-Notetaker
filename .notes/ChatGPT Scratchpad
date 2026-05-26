@@ -6,91 +6,89 @@ Purpose: This is the working handoff between ChatGPT, Chad, Codex, and ongoing d
 
 ## Current Design Perspective
 
-Nova Notetaker is evolving beyond a simple meeting recorder.
+Nova Notetaker is no longer just a meeting recorder. It is becoming a passive AI meeting intelligence product for enterprise users.
 
-The strongest emerging product identity is:
-
-- Passive AI meeting intelligence for enterprise users.
-
-Nova currently feels differentiated because it is:
+The strongest product identity remains:
 
 - Native Windows desktop software.
-- Local-first in workflow.
+- Passive local capture.
 - Self-hosted AI friendly.
 - Privacy-conscious.
-- Passive rather than invasive.
+- Local-first review workflow.
+- Meeting intelligence rather than simple transcription.
 
-Nova is NOT positioning itself as:
+Nova should continue avoiding the positioning of:
 
 - A Teams bot.
 - A cloud-only transcription SaaS.
 - Another Copilot clone.
 - A browser-first AI utility.
 
-Current architecture decisions reinforce the product identity well:
+The app should feel like:
 
-- WASAPI loopback capture.
-- Optional microphone capture.
-- Self-hosted WhisperLive.
-- Self-hosted Ollama.
-- Internal infrastructure.
-- Local meeting storage.
+- A calm executive productivity tool with embedded AI.
+
+Not:
+
+- A futuristic AI showcase.
+- A developer utility panel.
+- A transcription debugging tool.
 
 ## Current Product Assessment
 
-Current overall assessment:
+Current overall assessment after reviewing the latest Codex Scratchpad, repo direction, and screenshots:
 
 - Product direction is strong.
 - Architecture direction is correct.
 - Branding direction is correct.
-- Information architecture is solid.
-- UI hierarchy is improving.
-- Product already feels substantially more polished than a prototype.
+- The app is now beyond prototype quality.
 - Dark mode is approaching believable enterprise software quality.
+- The primary gap is now workflow refinement and cognitive load reduction.
 
-Implemented since the last design review:
-
-- Human-readable Meetings status badges.
-- Calendar approval/edit workflow before `.ics` export.
-- Cross-meeting Actions tab inside the Calendar workspace.
-- In-app Meeting Overview workspace alongside the popout.
-- Passive speaker rename aliases for transcript display.
-- Settings diagnostics/preflight controls.
-- Template/profile duplicate and preview controls.
-- Lightweight meeting index foundation.
-- Layout constraint pass across Meetings, Calendar, Actions, Search, and Settings.
-
-Current priority should shift away from major feature expansion and toward:
-
-- Cohesion.
-- Visual refinement.
-- Workflow clarity.
-- Consistency.
-- Perceived quality.
-- UX confidence.
-- Cognitive load reduction.
-
-The product is entering the transition from:
+The product is crossing from:
 
 - Interesting engineering project.
 
 Toward:
 
-- Believable enterprise software.
+- Believable enterprise meeting intelligence software.
 
-That transition is now primarily a UX and design challenge.
+That transition is mostly a UX/design challenge now.
+
+## Implemented / No Longer Primary Action Items
+
+These items appear implemented or far enough along that they should no longer be treated as active design action items:
+
+- Human-readable Meetings status badges.
+- Calendar approval/edit workflow before `.ics` export.
+- Cross-meeting Actions tab inside the Calendar workspace.
+- Action status editing.
+- In-app Meeting Overview workspace alongside the popout.
+- Search page for meetings, notes, transcripts, owners, and dates.
+- Passive speaker rename aliases for transcript display.
+- Meeting profile editor.
+- Note template editor.
+- Meeting profile default note template support.
+- Template/profile duplicate and preview controls.
+- Settings diagnostics/preflight controls.
+- Settings scroll/layout stabilization.
+- Lightweight meeting index foundation.
+- Layout constraint pass across Meetings, Calendar, Actions, Search, and Settings.
+- Initial UI Design System document.
+
+These should move into maintenance/polish rather than remaining in future-action lists.
 
 ## Design Direction
 
-Current design direction is correct and should continue:
+The current design direction remains correct:
 
 - Corporate dark executive dashboard.
 - Matte surfaces.
 - Restrained orange accents.
 - Minimal glow.
 - Practical enterprise layouts.
+- Clear visual hierarchy over spectacle.
 - Strong readability.
-- Clear visual hierarchy.
 
 The product should avoid:
 
@@ -99,6 +97,7 @@ The product should avoid:
 - Gaming aesthetics.
 - Overly futuristic AI visuals.
 - Heavy animation.
+- Developer-centric infrastructure language.
 
 Target visual inspiration should remain closer to:
 
@@ -110,13 +109,13 @@ Target visual inspiration should remain closer to:
 
 ## Theme Review
 
-Current implemented themes:
+Current themes:
 
 - Executive Dark.
 - Clean Professional.
 - Modern Gradient / Colorful.
 
-Current assessment after screenshot review:
+Current assessment:
 
 Executive Dark:
 
@@ -124,63 +123,51 @@ Executive Dark:
 - Most professional.
 - Most enterprise-ready.
 - Best balance of contrast and focus.
-- Current flagship recommendation.
+- Should remain the flagship/default experience.
 
 Clean Professional / Light:
 
 - Structurally good.
-- Feels somewhat flat and clinical.
-- Useful as an accessibility and daytime option.
-- Needs more depth and hierarchy refinement.
+- Useful as a daytime/accessibility option.
+- Still feels somewhat flat compared to Executive Dark.
+- Should be refined second, after Dark is stable.
 
 Colorful / Gradient:
 
-- More visually interesting.
-- Currently feels less enterprise-oriented.
-- Risks leaning toward consumer/gaming aesthetics.
-- Should remain restrained if retained.
+- Visually interesting but least corporate.
+- Risks leaning consumer/gaming if overused.
+- Should be treated as experimental or toned down.
 
 Current recommendation:
 
-- Executive Dark should remain the primary/default experience.
-- Light theme should remain available but secondary.
-- Consider toning down or redesigning the Colorful theme.
-
-The newer Dark screenshots are a major improvement over earlier purple-heavy styling.
-
-The darker matte surfaces with restrained orange accents are significantly more professional.
+- Commit harder to Executive Dark as Nova's main identity.
+- Keep Light as an accessibility/business-day option.
+- Reassess Colorful later. It should not drive the product identity.
 
 ## Information Architecture Review
 
-The current sidebar structure is strong:
+The sidebar structure has expanded in the Codex Scratchpad to include:
 
-- Live Capture
-- Meetings
-- Logs
-- Templates
-- Settings
+- Live Capture.
+- Meetings.
+- Search.
+- Calendar.
+- Logs.
+- Templates.
+- Settings.
 
-This creates clean separation between:
+This architecture is strong and now better matches the product's growth from capture tool to meeting intelligence workspace.
 
-- Active workflows.
-- Historical review.
-- Configuration.
-- System visibility.
+Current sidebar guidance:
 
-The sidebar itself is already quite successful visually.
-
-Current recommendations:
-
-- Slightly tighten vertical spacing.
-- Slightly reduce sidebar contrast.
-- Make the orb/status panel slightly more compact.
-- Preserve the overall structure and branding.
-
-The Meetings page and Meeting Overview concepts are especially promising long-term.
+- Preserve the current structure.
+- Keep the Nova brand present but not oversized.
+- Keep the orb/status area compact and calm.
+- Avoid turning the sidebar into a promotional/assistant area.
 
 ## Structured Insights Direction
 
-Structured insights were a major product improvement.
+Structured insights remain one of the strongest product decisions.
 
 The app shifted from:
 
@@ -190,7 +177,7 @@ Toward:
 
 - Actionable meeting intelligence.
 
-The most valuable outputs are:
+The most valuable outputs remain:
 
 - Action items.
 - Decisions.
@@ -198,22 +185,19 @@ The most valuable outputs are:
 - Ownership.
 - Review warnings.
 - Confidence scoring.
+- Follow-up visibility.
 
-The UI should progressively prioritize insights over raw transcript visibility.
+Current design guidance:
 
-Long-term product framing should continue shifting from:
-
-- Meeting notes.
-
-Toward:
-
-- Meeting intelligence.
+- Insights should feel more important than raw transcript text.
+- Raw transcript should remain available as evidence/context, not the primary product value.
+- Insight cards should feel operational, not decorative.
 
 ## Current UX Risks
 
 ### Utility Panel Risk
 
-There is a risk the UI becomes too infrastructure-focused.
+There is still a risk the UI becomes too infrastructure-focused.
 
 Users should feel:
 
@@ -223,21 +207,13 @@ Users should NOT feel:
 
 - I operated an AI audio processing pipeline.
 
-Implementation details such as:
-
-- Chunking.
-- Retry logic.
-- WebSocket behavior.
-- Internal processing mechanics.
-
-Should remain secondary unless troubleshooting is needed.
+Implementation details such as chunking, retry logic, WebSocket behavior, and processing internals should remain secondary unless troubleshooting is needed.
 
 ### Transcript Dominance Risk
 
-Raw transcript panels are visually noisy.
+Raw transcripts are useful but visually noisy.
 
-Users believe they want transcripts.
-What they actually value:
+Users believe they want transcripts. What they actually value most often is:
 
 - Decisions.
 - Tasks.
@@ -249,38 +225,33 @@ Transcript visibility should remain available but should not overpower actionabl
 
 ### Product Sophistication vs Visual Polish
 
-The backend and product thinking are becoming increasingly sophisticated:
+The backend and product thinking are now sophisticated enough that visual polish needs to keep pace.
 
-- Structured insights.
-- Confidence scoring.
-- Reprocessing.
-- Workflow awareness.
-- Future integrations.
-
-The visual design now needs refinement to match the intelligence of the system.
-
-Areas needing continued polish:
+Continue refining:
 
 - Typography hierarchy.
 - Spacing consistency.
 - Density control.
-- Status communication.
 - Card hierarchy.
+- Insight hierarchy.
 - Window layout behavior.
 - Theme consistency.
 
 ## Live Capture UX Review
 
+Live Capture remains the most important near-term design opportunity.
+
 Current assessment:
 
-- Functionality appears strong.
-- Visual hierarchy needs improvement.
-- Too many UI areas currently compete equally for attention.
+- Functionality is strong.
+- Visual quality is good.
+- The screen still risks feeling like a dashboard of panels instead of a guided meeting workflow.
+- Too many areas compete equally for attention.
 
-Current UI contains simultaneously:
+The screen currently has to balance:
 
-- Meeting configuration.
-- Status.
+- Meeting setup.
+- Recording state.
 - Timer.
 - Audio levels.
 - Transcript.
@@ -288,21 +259,20 @@ Current UI contains simultaneously:
 - Theme controls.
 - Recording controls.
 
-This creates excessive attention competition.
-
 Current recommendation:
 
-Refactor the page into clearer zones:
+Refactor the experience toward clearer workflow zones.
 
 Top section:
 
 - Meeting title.
+- Meeting profile / note template in a calmer setup area.
 - Recording state.
 - Elapsed time.
 
 Middle section:
 
-- Transcript.
+- Live transcript.
 - Speaker activity.
 - Realtime context.
 
@@ -312,154 +282,169 @@ Right rail:
 - Action items.
 - Decisions.
 - Dates.
-- Risks.
+- Risks / review warnings.
 
 Bottom sticky control area:
 
-- Record.
-- Pause.
+- Record / Stop.
+- Pause, if implemented.
 - Add note.
-- Bookmark.
+- Mark important / bookmark.
 
 The page should feel workflow-oriented rather than panel-oriented.
 
 The user should always intuitively know:
 
 - Current meeting state.
-- What matters now.
-- What the AI has already identified.
+- What matters right now.
+- What Nova has already identified.
+
+## Insight Card Redesign Direction
+
+The insight rail/card system is the next major design opportunity.
+
+Current direction:
+
+- Cards should feel like live operational intelligence.
+- Empty states should feel calm, not dead.
+- Counts should be meaningful.
+- Status should be human-readable.
+
+Future card examples:
+
+- 3 Open Actions.
+- 1 Missing Owner.
+- 2 Due This Week.
+- 1 Decision Captured.
+- 2 Review Warnings.
+
+Potential card improvements:
+
+- Ownership badges.
+- Confidence indicators.
+- Due-date urgency states.
+- Newly detected markers.
+- Compact status summaries.
+- Click-through to Meeting Workspace sections.
 
 ## Meetings Page Review
 
-The Meetings page is currently one of the strongest screens.
+The Meetings page is now one of the stronger surfaces.
 
 Current strengths:
 
 - Clean structure.
 - Clear table layout.
-- Good spacing.
-- Easy scanability.
+- Good scanability.
+- Human-readable status badges have moved this closer to an operational dashboard.
 
-Current weakness:
+Current guidance:
 
-- Status values feel too technical.
+- Treat the Meetings page as an executive work queue.
+- Keep status language human-readable.
+- Avoid backend strings.
+- Preserve clean density.
+- Avoid overloading the table with every possible metadata field.
 
-Avoid backend-like status strings such as:
+The page should feel like:
 
-- processed_with_warnings
-- needs review
+- Operational meeting intelligence index.
 
-Recommended UX direction:
+Not:
 
-- Human-readable operational badges.
+- File browser.
+- Processing table.
 
-Examples:
+## Calendar / Actions Workspace Review
 
-- Complete
-- Needs Review
-- Processing
-- Draft
-- Low Confidence
-- Missing Owner
-- Missing Due Date
+Calendar and Actions are now meaningful product surfaces rather than future ideas.
 
-The Meetings page should eventually feel more like:
+Current direction is good:
 
-- Executive operational dashboard.
+- Dates are reviewed before export.
+- Actions can be filtered and managed across meetings.
+- Action state is local and editable.
 
-Rather than:
+Design guidance:
 
-- Technical processing table.
+- Keep approval and export workflows conservative.
+- Require user approval before creating/exporting calendar items.
+- Keep Actions focused on ownership, due date, status, and confidence.
+- Avoid turning Calendar into a full scheduling product too early.
+
+## Search Workspace Review
+
+Search now exists and should be considered an implemented core surface.
+
+Design guidance:
+
+- Keep search fast and plain.
+- Results should prioritize meeting title, date, matched context, and direct open action.
+- Avoid overcomplicating search with advanced query UI until usage proves it is needed.
 
 ## Templates and Settings UX Review
 
-Current structure is good.
+Templates and Settings have improved since the earlier screenshot review.
 
-Current issue:
+Implemented improvements include:
 
-- Configuration fatigue.
-- Visual density.
-- Repetitive form rhythm.
+- Scrollable Settings content.
+- Better control heights.
+- Compact helper text and tooltips.
+- Template/profile editing workflows.
+- Duplicate and preview controls.
+- Tighter template layout.
 
-The current pattern:
+Remaining guidance:
 
-- Label.
-- Field.
-- Description.
+- Continue reducing configuration fatigue.
+- Keep advanced settings visually secondary.
+- Keep helper text compact.
+- Group related controls clearly.
+- Avoid making Templates feel like a developer prompt editor unless Chad explicitly wants a richer prompt-studio model.
 
-Repeated continuously creates cognitive exhaustion.
+Templates should remain understandable to a business user:
 
-Current recommendations:
+- Meeting profile = meeting/company context.
+- Note template = note structure/output style.
 
-- Introduce stronger section grouping.
-- Use subsection cards.
-- Increase whitespace between conceptual groups.
-- Reduce visible helper text.
-- Collapse advanced sections.
-- Use lighter helper text styling.
-- Use inline helper icons/tooltips.
+## Meeting Overview / Workspace Direction
 
-The Templates page specifically would benefit from:
-
-- Stronger separation between metadata and editor content.
-- More visual emphasis on the editable intelligence areas.
-
-## Meeting Overview Direction
-
-The Meeting Overview experience may become the true core product surface.
+The Meeting Overview / Workspace experience may become the true core product surface.
 
 Reasoning:
 
 - Recording is temporary.
 - Review and follow-up create long-term value.
-- Users revisit decisions more than recordings.
+- Users revisit decisions and actions more than recordings.
 
-Long-term product direction may evolve toward:
+Current direction:
 
-- Capture.
-- Meetings Index.
-- Meeting Workspace.
+- Keep the in-app workspace and popout model.
+- Continue polishing the workspace as the premium review experience.
+- Make it feel like an AI-generated executive briefing, not a transcript viewer.
 
-Rather than treating the overview strictly as a secondary popout.
-
-Current recommendation:
-
-- Continue refining the overview window heavily.
-- Prioritize readability.
-- Prioritize workflow efficiency.
-- Keep insights highly visible.
-- Minimize clutter.
-
-Recommended information hierarchy for Meeting Overview:
+Recommended information hierarchy:
 
 1. Executive Summary.
 2. Key Decisions.
 3. Action Items.
-4. Risks / Review Needed.
-5. Structured Notes.
-6. Raw Transcript.
+4. Dates / Follow-ups.
+5. Risks / Review Needed.
+6. Structured Notes.
+7. Transcript Evidence.
+8. Details / Metadata.
 
-The current transcript experience should eventually become less visually dominant.
+Potential future improvements:
 
-Potential improvements:
-
-- Collapsed transcript sections by default.
-- Reduced transcript contrast.
-- Jump-to-transcript links.
-- Stronger insight cards.
-- Larger visual emphasis on actions and decisions.
-
-The Meeting Overview page should eventually feel like:
-
-- AI-generated executive briefing.
-
-Not:
-
-- A transcript viewer.
+- Click-to-jump from insight cards to relevant note/transcript context.
+- Cleaner evidence linking from insights to transcript segments.
+- More visual emphasis on unresolved actions and upcoming dates.
+- Better print/export layout for executive summaries.
 
 ## Realtime Transcription Direction
 
-Realtime or near-realtime transcription is considered realistically achievable with the current infrastructure.
+Realtime or near-realtime transcription remains a realistic next major functional milestone.
 
 Current infrastructure strengths:
 
@@ -473,7 +458,7 @@ Recommended target experience:
 - Near-realtime rolling transcript.
 - Approximate latency target between 2-8 seconds.
 
-The product should NOT attempt fully polished live AI meeting intelligence initially.
+The product should not attempt fully polished live AI meeting intelligence initially.
 
 Recommended phased rollout:
 
@@ -507,30 +492,18 @@ UX guidance:
 - Transcript updates should avoid jittery UI behavior.
 - Realtime transcript should feel premium, not noisy.
 
-The app should avoid feeling like:
-
-- Live debugging output.
-- Streaming console logs.
-- Captioning spam.
-
-The app should instead feel like:
-
-- Quiet live meeting awareness.
-- Ambient meeting intelligence.
-- Calm rolling context.
-
 ## Speaker Identification Direction
 
 Current recommendation:
 
-- Preserve Nova’s passive-first architecture.
+- Preserve Nova's passive-first architecture.
 - Avoid requiring active Teams bot integration initially.
 
-Current realistic recommendation:
+Current realistic direction:
 
 - Speaker diarization rather than full Teams identity awareness.
 
-Recommended near-term UX:
+Near-term UX model:
 
 - Speaker 1.
 - Speaker 2.
@@ -538,21 +511,15 @@ Recommended near-term UX:
 - You.
 - Meeting Audio.
 
-Potential future enhancement:
+Already implemented:
 
-- Allow post-meeting speaker renaming.
+- Passive speaker rename aliases for transcript display.
 
-Example:
+Still future:
 
-- Speaker 1 -> Maya
-- Speaker 2 -> Alex
-
-This preserves:
-
-- Privacy-first positioning.
-- Passive architecture.
-- Simpler infrastructure.
-- Local-first workflow.
+- True passive speaker diarization that splits meeting audio into speaker segments.
+- Better speaker confidence indicators.
+- Optional post-meeting speaker assignment review.
 
 Longer-term possibility:
 
@@ -580,41 +547,34 @@ Current recommendation:
 
 Current profile architecture can still scale reasonably using:
 
-- settings.json
-- meeting_profiles.json
-- note_profiles.json
-- per-meeting metadata.json
+- settings.json.
+- profiles.json / meeting profiles.
+- templates.json / note templates.
+- per-meeting metadata.json.
+- per-meeting insights.json.
+- per-meeting calendar_review.json.
 
 Important architectural recommendation:
 
-- Meetings should store profile snapshots at generation time.
+- Meetings should store profile/template snapshots at generation time.
 - Avoid relying only on live profile references.
 
 Recommended future metadata concepts:
 
-- meeting_profile_id
-- note_profile_id
-- profile_snapshot
-- schema_version
-
-This allows:
-
-- Historical consistency.
-- Safer future migrations.
-- Easier troubleshooting.
-- Better forward compatibility.
+- meeting_profile_id.
+- note_template_id.
+- profile_snapshot.
+- template_snapshot.
+- schema_version.
 
 Longer-term database migration may become appropriate when Nova introduces:
 
-- Cross-meeting search.
-- Action dashboards.
-- Large meeting libraries.
-- Advanced filtering.
-- Analytics.
-- State editing.
+- Very large meeting libraries.
+- Heavier cross-meeting analytics.
 - Relationship mapping.
 - Cross-project intelligence.
-- Organizational memory.
+- Organization memory.
+- More complex sync/export state.
 
 Likely future recommendation:
 
@@ -630,20 +590,16 @@ Current recommendation:
 
 Orange is the correct brand accent.
 
-However:
+Orange should remain restrained and should communicate:
 
-- Orange should remain restrained.
-- Orange should communicate focus and action.
-- Large orange surfaces should be avoided.
+- Action.
+- Focus.
+- Recording state.
+- Selection.
+- Active navigation.
+- Small brand moments.
 
-Orange is best used for:
-
-- Active states.
-- Recording indicators.
-- Focus highlights.
-- Buttons.
-- Selected states.
-- Minimal brand accents.
+Avoid large orange surfaces except for true primary actions.
 
 Core surfaces should remain:
 
@@ -669,7 +625,7 @@ It should feel like:
 - Calm intelligence.
 - Soft system presence.
 
-It should NOT feel like:
+It should not feel like:
 
 - Jarvis.
 - Cortana.
@@ -684,35 +640,32 @@ Recommendations:
 - Elegant motion.
 - Soft movement only.
 
-Reference feeling:
-
-- Luxury automotive UI.
-- Calm enterprise AI.
-- Ambient premium software.
+The orb works best as quiet system presence, not an assistant avatar.
 
 ## Priority Design Improvements
 
 Highest current design priorities:
 
-1. Live Capture layout redesign.
-2. Typography hierarchy cleanup.
-3. Insight card redesign.
-4. Unified spacing system.
-5. Responsive scaling polish.
-6. Optional compact mode.
+1. Refine Live Capture into a clearer meeting workflow.
+2. Redesign insight cards to feel more operational and intelligent.
+3. Continue polishing the Meeting Workspace as the premium review surface.
+4. Tighten typography and spacing using the UI Design System.
+5. Keep reducing visible infrastructure complexity.
+6. Screenshot-test updated Calendar, Actions, Search, and Meeting Workspace at real Windows scaling.
+7. Prepare realtime transcript UX patterns before implementation.
 
-Additional recommended priorities:
+Secondary / later priorities:
 
-- Improve perceived responsiveness.
-- Add loading/skeleton states.
-- Add smoother transitions.
-- Reduce visible infrastructure complexity.
+- Light theme depth refinement.
+- Colorful theme reassessment or toning down.
+- Optional compact mode only if real screen usage shows density problems.
+- Export/print polish for executive meeting summaries.
 
-## Design System Recommendation
+## Design System Guidance
 
-The project is reaching the point where a formal design system is recommended.
+The project now has a UI Design System document.
 
-Design system exists at `.notes/UI Design System`. Potential areas to keep refining:
+Continue using it as the source of truth for:
 
 - Typography scale.
 - Spacing scale.
@@ -725,29 +678,7 @@ Design system exists at `.notes/UI Design System`. Potential areas to keep refin
 - Animation timing.
 - Density rules.
 
-Without standardization, long-term UI consistency may degrade as the application grows.
-
-## UX Philosophy
-
-Nova should feel:
-
-- Calm.
-- Reliable.
-- Intelligent.
-- Quietly powerful.
-- Enterprise-safe.
-- Focused.
-- Fast.
-
-The UI should communicate confidence without feeling experimental.
-
-Preferred emotional tone:
-
-- Calm executive productivity tool with embedded AI.
-
-Not:
-
-- Futuristic AI showcase.
+Design system work should now focus on enforcement and consistency rather than creating the system from scratch.
 
 ## Screen Testing Guidance
 
@@ -767,22 +698,25 @@ Enterprise polish is heavily influenced by:
 - Information density.
 - Predictable interactions.
 
-Screenshot-based review should become part of the standard iteration process.
+Screenshot-based review should remain part of the standard iteration process.
 
 ## Future Product Opportunities
 
-Potential future opportunities:
+Potential future opportunities that still appear relevant:
 
+- True passive speaker diarization.
+- Realtime transcript streaming.
 - Meeting quality scoring.
 - Follow-up reminders.
 - Outlook integration.
 - n8n workflow automation.
-- Cross-meeting aggregation.
+- Planner integration.
+- Template/profile import/export packs.
+- Per-template insight-card preferences.
 - Team/project tagging.
-- Executive summary templates.
-- Technical review templates.
 - Cross-meeting unresolved-item tracking.
 - Organization memory/search.
+- Executive summary export/print mode.
 
 ## Communication Notes For Codex / Engineering
 
