@@ -311,6 +311,61 @@ The app should instead feel like:
 - Ambient meeting intelligence.
 - Calm rolling context.
 
+## Future Database Considerations
+
+Current recommendation:
+
+- Continue using file-based JSON storage for now.
+- Avoid premature migration to a database.
+
+Current profile architecture can still scale reasonably using:
+
+- settings.json
+- meeting_profiles.json
+- note_profiles.json
+- per-meeting metadata.json
+
+Important architectural recommendation:
+
+- Meetings should store profile snapshots at generation time.
+- Avoid relying only on live profile references.
+
+Recommended future metadata concepts:
+
+- meeting_profile_id
+- note_profile_id
+- profile_snapshot
+- schema_version
+
+This allows:
+
+- Historical consistency.
+- Safer future migrations.
+- Easier troubleshooting.
+- Better forward compatibility.
+
+Longer-term database migration may become appropriate when Nova introduces:
+
+- Cross-meeting search.
+- Action dashboards.
+- Large meeting libraries.
+- Advanced filtering.
+- Analytics.
+- State editing.
+- Relationship mapping.
+- Cross-project intelligence.
+- Organizational memory.
+
+Likely future recommendation:
+
+- SQLite rather than a heavy external database.
+
+Current recommendation:
+
+- Design the data model so future SQLite migration is possible.
+- Do not migrate prematurely.
+- Prioritize simplicity while the product architecture is still evolving.
+
 ## Branding Notes
 
 Orange is the correct brand accent.
