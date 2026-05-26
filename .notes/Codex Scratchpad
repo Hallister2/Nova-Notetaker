@@ -54,6 +54,9 @@ Current infrastructure assumptions:
 - Meeting profiles are implemented and editable.
   - Profiles live in `config/profiles.json`.
   - Live Capture has a profile selector.
+  - Profiles can define a default note template.
+  - Changing the Meeting Profile on Live Capture loads that profile's default Note Template when one is configured.
+  - Manually changing the Note Template on Live Capture only changes the current/default app selection; it does not update the saved profile.
   - Selected profile data is written into meeting metadata.
   - Ollama receives profile context during note generation.
   - The Templates page includes a Meeting Profiles editor with create, edit, save, and delete workflows.

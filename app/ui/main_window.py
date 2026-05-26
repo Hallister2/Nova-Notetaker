@@ -475,6 +475,9 @@ class MainWindow(QMainWindow):
     def _profile_selection_changed(self) -> None:
         profile = self._selected_meeting_profile()
         self.settings.setdefault("app", {})["selected_profile_id"] = profile.id
+        if profile.default_note_template_id and hasattr(self, "template_combo") and self._note_template_exists(profile.default_note_template_id):
+            select_combo_by_data(self.template_combo, profile.default_note_template_id)
+            self.settings.setdefault("app", {})["selected_template_id"] = profile.default_note_template_id
         save_settings(self.settings)
         self.update_settings_summary()
 
@@ -492,6 +495,18 @@ class MainWindow(QMainWindow):
         select_combo_by_data(self.template_combo, selected_id)
         self.template_combo.blockSignals(False)
 
+    def _populate_profile_default_template_combo(self, selected_id: str = "") -> None:
+        if not hasattr(self, "profile_default_template_combo"):
+            return
+        self.profile_default_template_combo.blockSignals(True)
+        self.profile_default_template_combo.clear()
+        self.profile_default_template_combo.addItem("No default - keep current selection", "")
+        self.note_templates = self.template_store.list_templates()
+        for template in self.note_templates:
+            self.profile_default_template_combo.addItem(f"{template.name} ({template.category})", template.id)
+        select_combo_by_data(self.profile_default_template_combo, selected_id)
+        self.profile_default_template_combo.blockSignals(False)
+
     def _template_selection_changed(self) -> None:
         template = self._selected_note_template()
         self.settings.setdefault("app", {})["selected_template_id"] = template.id
@@ -502,6 +517,9 @@ class MainWindow(QMainWindow):
         template_id = str(self.template_combo.currentData() or self.settings.get("app", {}).get("selected_template_id", "standard"))
         return self.template_store.get_template(template_id)
 
+    def _note_template_exists(self, template_id: str) -> bool:
+        return any(template.id == template_id for template in self.template_store.list_templates())
+
     @staticmethod
     def _profile_metadata(profile: MeetingProfile) -> dict[str, str]:
         return {
@@ -511,6 +529,7 @@ class MainWindow(QMainWindow):
             "company_conducting": profile.company_conducting,
             "companies_attending": profile.companies_attending,
             "default_meeting_title_prefix": profile.default_meeting_title_prefix,
+            "default_note_template_id": profile.default_note_template_id,
             "ai_context": profile.ai_context,
             "notes_focus": profile.notes_focus,
         }
@@ -878,6 +897,8 @@ class MainWindow(QMainWindow):
         self.profile_company_conducting_edit = QLineEdit()
         self.profile_companies_attending_edit = QLineEdit()
         self.profile_title_prefix_edit = QLineEdit()
+        self.profile_default_template_combo = QComboBox()
+        self._populate_profile_default_template_combo()
         self.profile_context_edit = QTextEdit()
         self.profile_context_edit.setMaximumHeight(74)
         self.profile_focus_edit = QTextEdit()
@@ -887,6 +908,7 @@ class MainWindow(QMainWindow):
         form.addRow("Company conducting", self.profile_company_conducting_edit)
         form.addRow("Companies attending", self.profile_companies_attending_edit)
         form.addRow("Title prefix", self.profile_title_prefix_edit)
+        form.addRow("Default note template", self.profile_default_template_combo)
         form.addRow("AI context", self.profile_context_edit)
         form.addRow("Notes focus", self.profile_focus_edit)
         editor_layout.addLayout(form)
@@ -1030,6 +1052,7 @@ class MainWindow(QMainWindow):
         self.profile_company_conducting_edit.setText(profile.company_conducting)
         self.profile_companies_attending_edit.setText(profile.companies_attending)
         self.profile_title_prefix_edit.setText(profile.default_meeting_title_prefix)
+        select_combo_by_data(self.profile_default_template_combo, profile.default_note_template_id)
         self.profile_context_edit.setPlainText(profile.ai_context)
         self.profile_focus_edit.setPlainText(profile.notes_focus)
 
@@ -1039,6 +1062,7 @@ class MainWindow(QMainWindow):
         self.profile_company_conducting_edit.clear()
         self.profile_companies_attending_edit.clear()
         self.profile_title_prefix_edit.clear()
+        select_combo_by_data(self.profile_default_template_combo, "")
         self.profile_context_edit.clear()
         self.profile_focus_edit.clear()
 
@@ -1065,6 +1089,7 @@ class MainWindow(QMainWindow):
             company_conducting=self.profile_company_conducting_edit.text().strip(),
             companies_attending=self.profile_companies_attending_edit.text().strip(),
             default_meeting_title_prefix=self.profile_title_prefix_edit.text().strip(),
+            default_note_template_id=str(self.profile_default_template_combo.currentData() or ""),
             ai_context=self.profile_context_edit.toPlainText().strip(),
             notes_focus=self.profile_focus_edit.toPlainText().strip(),
         )
@@ -1202,6 +1227,7 @@ class MainWindow(QMainWindow):
         self.settings.setdefault("app", {})["selected_template_id"] = template.id
         save_settings(self.settings)
         self._populate_template_combo()
+        self._populate_profile_default_template_combo()
         select_combo_by_data(self.template_combo, template.id)
         self.refresh_templates_table(template.id)
         self.update_settings_summary()
@@ -1234,6 +1260,7 @@ class MainWindow(QMainWindow):
             self.settings.setdefault("app", {})["selected_template_id"] = selected_id
             save_settings(self.settings)
         self._populate_template_combo()
+        self._populate_profile_default_template_combo()
         select_combo_by_data(self.template_combo, self.settings.get("app", {}).get("selected_template_id", selected_id))
         self.refresh_templates_table(selected_id)
         self.update_settings_summary()

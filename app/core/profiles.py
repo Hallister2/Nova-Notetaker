@@ -20,6 +20,7 @@ class MeetingProfile:
     company_conducting: str = ""
     companies_attending: str = ""
     default_meeting_title_prefix: str = ""
+    default_note_template_id: str = ""
     ai_context: str = ""
     notes_focus: str = ""
 
@@ -32,6 +33,8 @@ class MeetingProfile:
             lines.append(f"Company conducting: {self.company_conducting}")
         if self.companies_attending:
             lines.append(f"Companies attending: {self.companies_attending}")
+        if self.default_note_template_id:
+            lines.append(f"Default note template: {self.default_note_template_id}")
         if self.ai_context:
             lines.append(f"Context: {self.ai_context}")
         if self.notes_focus:
@@ -44,6 +47,7 @@ DEFAULT_PROFILES = [
         id="general",
         name="General Meeting",
         category="General Meeting",
+        default_note_template_id="standard",
         ai_context="Use balanced meeting notes suitable for internal review.",
         notes_focus="Summary, decisions, action items, dates, risks, and follow-ups.",
     ),
@@ -51,6 +55,7 @@ DEFAULT_PROFILES = [
         id="project_sync",
         name="Project Sync",
         category="Project Meeting",
+        default_note_template_id="project_sync",
         ai_context="This is a project coordination meeting.",
         notes_focus="Prioritize owners, blockers, delivery dates, decisions, dependencies, and next steps.",
     ),
@@ -58,6 +63,7 @@ DEFAULT_PROFILES = [
         id="team_call",
         name="Team Call",
         category="Team Call",
+        default_note_template_id="standard",
         ai_context="This is an internal team call.",
         notes_focus="Prioritize team commitments, decisions, reminders, risks, and any follow-up ownership.",
     ),
@@ -65,6 +71,7 @@ DEFAULT_PROFILES = [
         id="vendor_call",
         name="Vendor Call",
         category="Vendor Call",
+        default_note_template_id="vendor_call",
         ai_context="This is a meeting with an outside vendor or partner.",
         notes_focus="Prioritize commitments, risks, commercial details, dates, open questions, and accountability.",
     ),
@@ -72,6 +79,7 @@ DEFAULT_PROFILES = [
         id="personal_review",
         name="Personal Review",
         category="Personal Review",
+        default_note_template_id="executive_summary",
         ai_context="This is a personal review or one-on-one style meeting.",
         notes_focus="Prioritize feedback, goals, commitments, development items, and follow-up dates.",
     ),

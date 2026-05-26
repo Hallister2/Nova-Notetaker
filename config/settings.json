@@ -2,7 +2,7 @@
   "app": {
     "name": "Nova Notetaker",
     "theme": "executive_dark",
-    "selected_profile_id": "general",
+    "selected_profile_id": "daily_standup",
     "selected_template_id": "standard"
   },
   "audio": {
