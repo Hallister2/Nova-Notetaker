@@ -843,25 +843,41 @@ class MainWindow(QMainWindow):
         self.meeting_title = QLineEdit()
         self.meeting_title.setPlaceholderText("Meeting title")
         self.meeting_title.setText("Teams Meeting")
-        self.detect_title_button = QPushButton("Detect title")
+        self.detect_title_button = QPushButton("Detect")
+        self.detect_title_button.setToolTip("Detect title from the active window")
         self.detect_title_button.clicked.connect(self.detect_active_window_title)
 
-        title_stack = QVBoxLayout()
-        title_stack.setSpacing(12)
         self.meeting_title.setMinimumWidth(0)
-        self.meeting_title.setMinimumHeight(38)
+        self.meeting_title.setFixedHeight(40)
         self.profile_combo = QComboBox()
-        self.profile_combo.setMinimumHeight(38)
+        self.profile_combo.setFixedHeight(40)
         self._populate_profile_combo()
         self.profile_combo.currentIndexChanged.connect(self._profile_selection_changed)
         self.template_combo = QComboBox()
-        self.template_combo.setMinimumHeight(38)
+        self.template_combo.setFixedHeight(40)
         self._populate_template_combo()
         self.template_combo.currentIndexChanged.connect(self._template_selection_changed)
-        title_stack.addWidget(self._field_block("Meeting title", self.meeting_title))
-        title_stack.addWidget(self._field_block("Meeting profile", self.profile_combo))
-        title_stack.addWidget(self._field_block("Note template", self.template_combo))
-        title_stack.addWidget(self.detect_title_button, alignment=Qt.AlignLeft)
+        self.detect_title_button.setObjectName("SubtleActionButton")
+        self.detect_title_button.setFixedHeight(40)
+        self.detect_title_button.setFixedWidth(96)
+
+        setup_stack = QVBoxLayout()
+        setup_stack.setContentsMargins(0, 0, 0, 0)
+        setup_stack.setSpacing(10)
+
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.setSpacing(12)
+        title_row.addWidget(self._field_block("Meeting", self.meeting_title), stretch=1)
+        title_row.addWidget(self._button_block("", self.detect_title_button), stretch=0)
+
+        detail_row = QHBoxLayout()
+        detail_row.setContentsMargins(0, 0, 0, 0)
+        detail_row.setSpacing(12)
+        detail_row.addWidget(self._field_block("Profile", self.profile_combo), stretch=1)
+        detail_row.addWidget(self._field_block("Template", self.template_combo), stretch=1)
+        setup_stack.addLayout(title_row)
+        setup_stack.addLayout(detail_row)
 
         # Kept for state updates while the visible capture state lives in the transcript HUD.
         self.status_label = QLabel("Ready")
@@ -878,6 +894,7 @@ class MainWindow(QMainWindow):
         self.capture_mic_toggle.toggled.connect(self._save_capture_mic_toggle)
         self._sync_mic_toggle_label()
         self.settings_summary = self._muted_label("")
+        self.settings_summary.setWordWrap(True)
         self.mic_level = QProgressBar()
         self.mic_level.setRange(0, 100)
         self.mic_level.setTextVisible(False)
@@ -886,7 +903,7 @@ class MainWindow(QMainWindow):
         self.system_level.setTextVisible(False)
 
         layout.addWidget(self._section_label("Meeting setup"))
-        layout.addLayout(title_stack)
+        layout.addLayout(setup_stack)
         layout.addWidget(self.settings_summary)
         return card
 
@@ -2246,19 +2263,37 @@ class MainWindow(QMainWindow):
         label.setObjectName("FieldLabel")
         return label
 
-    def _field_block(self, label_text: str, control: QWidget) -> QWidget:
-        block = QWidget()
-        block.setObjectName("Transparent")
-        block.setMinimumHeight(66)
+    def _field_block(self, label_text: str, control: QWidget) -> QFrame:
+        block = QFrame()
+        block.setObjectName("SetupFieldBlock")
+        block.setMinimumHeight(64)
         block.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        control.setMinimumHeight(38)
+        control.setFixedHeight(40)
         control.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         layout = QVBoxLayout(block)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
         label = self._field_label(label_text)
-        label.setMinimumHeight(16)
+        label.setFixedHeight(16)
         layout.addWidget(label)
+        layout.addWidget(control)
+        return block
+
+    def _button_block(self, label_text: str, control: QWidget) -> QFrame:
+        block = QFrame()
+        block.setObjectName("SetupFieldBlock")
+        block.setMinimumHeight(64)
+        block.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        control.setFixedHeight(40)
+        layout = QVBoxLayout(block)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        if label_text:
+            label = self._field_label(label_text)
+            label.setFixedHeight(16)
+            layout.addWidget(label)
+        else:
+            layout.addSpacing(22)
         layout.addWidget(control)
         return block
 
