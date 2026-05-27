@@ -935,6 +935,7 @@ class MainWindow(QMainWindow):
         self.live_elapsed_label = QLabel("00:00:00")
         self.live_elapsed_label.setObjectName("CompactTimer")
         self.live_state_label = self._muted_label("Ready")
+        self.live_state_label.setObjectName("LiveStateBadge")
         self.live_mic_level = QProgressBar()
         self.live_mic_level.setRange(0, 100)
         self.live_mic_level.setTextVisible(False)
@@ -944,7 +945,7 @@ class MainWindow(QMainWindow):
         self.live_system_level.setTextVisible(False)
         self.live_system_level.setMinimumWidth(150)
         hud_layout.addWidget(self.live_elapsed_label, 0, 0, 2, 1)
-        hud_layout.addWidget(self.live_state_label, 0, 1, 2, 1)
+        hud_layout.addWidget(self.live_state_label, 0, 1, 2, 1, Qt.AlignLeft | Qt.AlignVCenter)
         hud_layout.addWidget(QLabel("Mic"), 0, 2)
         hud_layout.addWidget(self.live_mic_level, 0, 3)
         hud_layout.addWidget(QLabel("System"), 1, 2)
@@ -1026,8 +1027,8 @@ class MainWindow(QMainWindow):
         candidates_card = QFrame()
         candidates_card.setObjectName("RaisedPanel")
         candidates_layout = QVBoxLayout(candidates_card)
-        candidates_layout.setContentsMargins(16, 14, 16, 14)
-        candidates_layout.setSpacing(9)
+        candidates_layout.setContentsMargins(18, 16, 18, 16)
+        candidates_layout.setSpacing(12)
         candidates_header = QHBoxLayout()
         candidates_header.addWidget(self._section_label("Live candidates"))
         candidates_header.addStretch()
@@ -1124,6 +1125,7 @@ class MainWindow(QMainWindow):
         self.meeting_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.meeting_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.meeting_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.meeting_table.itemDoubleClicked.connect(lambda _item: self.open_meeting_overview())
         self.meeting_table.setSortingEnabled(True)
         self.meeting_table.verticalHeader().setVisible(False)
         header = self.meeting_table.horizontalHeader()
@@ -1138,8 +1140,8 @@ class MainWindow(QMainWindow):
         self.meeting_table.setColumnWidth(3, 150)
         self.meeting_table.setColumnWidth(4, 76)
         self.meeting_table.setColumnWidth(5, 76)
-        self.meeting_table.setColumnWidth(6, 170)
-        self.meeting_table.verticalHeader().setDefaultSectionSize(46)
+        self.meeting_table.setColumnWidth(6, 112)
+        self.meeting_table.verticalHeader().setDefaultSectionSize(50)
         filters = QHBoxLayout()
         filters.setSpacing(10)
         self.meeting_filter_combo = QComboBox()
@@ -1402,7 +1404,7 @@ class MainWindow(QMainWindow):
         calendar_side_layout.setSpacing(10)
         self.calendar_widget = InsightCalendarWidget()
         self.calendar_widget.setGridVisible(True)
-        self.calendar_widget.setMinimumSize(420, 300)
+        self.calendar_widget.setMinimumSize(560, 340)
         self.calendar_widget.clicked.connect(self._calendar_date_clicked)
         calendar_side_layout.addWidget(self.calendar_widget, stretch=1)
         self.calendar_day_summary = self._muted_label("Select a highlighted date to see its meeting items.")
@@ -1419,7 +1421,7 @@ class MainWindow(QMainWindow):
         )
         self.calendar_table = QTableWidget(0, 5)
         self.calendar_table.setMinimumWidth(0)
-        self.calendar_table.setMinimumHeight(240)
+        self.calendar_table.setMinimumHeight(300)
         self.calendar_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.calendar_table.setHorizontalHeaderLabels(["Approved", "Meeting", "Date", "Context", "Confidence"])
         self._configure_table(self.calendar_table)
@@ -1434,16 +1436,17 @@ class MainWindow(QMainWindow):
         calendar_table_header.setSectionResizeMode(2, QHeaderView.Fixed)
         calendar_table_header.setSectionResizeMode(3, QHeaderView.Stretch)
         calendar_table_header.setSectionResizeMode(4, QHeaderView.Fixed)
-        self.calendar_table.setColumnWidth(0, 96)
-        self.calendar_table.setColumnWidth(1, 240)
-        self.calendar_table.setColumnWidth(2, 170)
-        self.calendar_table.setColumnWidth(4, 110)
+        self.calendar_table.verticalHeader().setDefaultSectionSize(44)
+        self.calendar_table.setColumnWidth(0, 88)
+        self.calendar_table.setColumnWidth(1, 260)
+        self.calendar_table.setColumnWidth(2, 190)
+        self.calendar_table.setColumnWidth(4, 120)
         right_layout.addWidget(self.calendar_empty_state, stretch=1)
         right_layout.addWidget(self.calendar_table, stretch=1)
         calendar_grid.addWidget(right_side, 1, 0)
         calendar_grid.setColumnStretch(0, 1)
-        calendar_grid.setRowStretch(0, 2)
-        calendar_grid.setRowStretch(1, 1)
+        calendar_grid.setRowStretch(0, 3)
+        calendar_grid.setRowStretch(1, 2)
         panel_layout.addLayout(calendar_grid, stretch=1)
         review_tabs.addTab(panel, "Dates")
         review_tabs.addTab(self._build_actions_page(embedded=True), "Actions")
@@ -2575,17 +2578,22 @@ class MainWindow(QMainWindow):
             if widget:
                 widget.deleteLater()
 
-        if not rows:
+        empty_rows = not rows
+        if empty_rows:
             rows = [("--:--:--", "Meeting Audio", "Transcript rows will appear here after capture and processing.")]
 
         for row_data in rows:
             timestamp, speaker, text = row_data[:3]
             is_partial = bool(row_data[3]) if len(row_data) > 3 else False
             row = QFrame()
-            row.setObjectName("LiveTranscriptRow" if is_partial else "TranscriptRow")
+            if empty_rows:
+                row.setObjectName("TranscriptEmptyRow")
+            else:
+                row.setObjectName("LiveTranscriptRow" if is_partial else "TranscriptRow")
             row_layout = QGridLayout(row)
-            row_layout.setContentsMargins(12, 9, 12, 9)
-            row_layout.setHorizontalSpacing(12)
+            row_layout.setContentsMargins(14, 10, 14, 10)
+            row_layout.setHorizontalSpacing(14)
+            row_layout.setVerticalSpacing(4)
             time_label = self._muted_label("Now" if is_partial else timestamp)
             speaker_label = QLabel(speaker)
             speaker_label.setObjectName("OrangeText" if speaker == "You" else "BlueText")
@@ -2596,8 +2604,8 @@ class MainWindow(QMainWindow):
             row_layout.addWidget(time_label, 0, 0, Qt.AlignTop)
             row_layout.addWidget(speaker_label, 0, 1, Qt.AlignTop)
             row_layout.addWidget(text_label, 1, 1)
-            row_layout.setColumnMinimumWidth(0, 72)
-            row_layout.setColumnMinimumWidth(1, 120)
+            row_layout.setColumnMinimumWidth(0, 78)
+            row_layout.setColumnMinimumWidth(1, 128)
             row_layout.setColumnStretch(1, 1)
             self.transcript_layout.addWidget(row)
         self.transcript_layout.addStretch()
@@ -2614,12 +2622,15 @@ class MainWindow(QMainWindow):
             widget = item.widget()
             if widget:
                 widget.deleteLater()
-        for item_text in items[:5] or ["None detected yet"]:
+        empty = not items
+        for item_text in items[:5] or ["Listening for stable candidates..."]:
             if isinstance(item_text, InsightItem):
                 layout.addWidget(self._insight_preview_widget(item_text))
             else:
-                label = self._muted_label(f"- {item_text}")
+                prefix = "" if empty else "- "
+                label = self._muted_label(f"{prefix}{item_text}")
                 label.setObjectName("InsightPreviewText")
+                label.setWordWrap(True)
                 layout.addWidget(label)
 
     def _insight_preview_widget(self, item: InsightItem) -> QWidget:
@@ -3683,16 +3694,10 @@ class MainWindow(QMainWindow):
             self.meeting_table.setCellWidget(row, 3, status_cell)
 
             open_button = QPushButton("Open")
-            open_button.setText("Open")
             open_button.setObjectName("TableActionButton")
-            open_button.setFixedSize(58, 30)
+            open_button.setFixedSize(82, 32)
             open_button.setToolTip("Open this meeting overview")
             open_button.clicked.connect(lambda checked=False, meeting_folder=folder: self.open_meeting_overview(meeting_folder))
-            workspace_button = QPushButton("Workspace")
-            workspace_button.setObjectName("TableActionButton")
-            workspace_button.setFixedSize(84, 30)
-            workspace_button.setToolTip("Open this meeting in the main workspace")
-            workspace_button.clicked.connect(lambda checked=False, meeting_folder=folder: self.open_meeting_workspace(meeting_folder))
             open_item = SortableTableItem("")
             open_item.setData(Qt.UserRole, str(folder))
             open_item.setData(Qt.UserRole + 1, "")
@@ -3700,12 +3705,10 @@ class MainWindow(QMainWindow):
             open_cell = QWidget()
             open_cell.setObjectName("Transparent")
             open_layout = QHBoxLayout(open_cell)
-            open_layout.setContentsMargins(4, 4, 4, 4)
-            open_layout.setSpacing(4)
-            open_layout.addWidget(open_button)
-            open_layout.addWidget(workspace_button)
+            open_layout.setContentsMargins(5, 5, 5, 5)
+            open_layout.addWidget(open_button, alignment=Qt.AlignCenter)
             self.meeting_table.setCellWidget(row, 6, open_cell)
-            self.meeting_table.setRowHeight(row, 46)
+            self.meeting_table.setRowHeight(row, 50)
 
             if current_folder and folder == current_folder:
                 self.meeting_table.selectRow(row)
@@ -3715,7 +3718,7 @@ class MainWindow(QMainWindow):
         self.meeting_table.setColumnWidth(3, 172)
         self.meeting_table.setColumnWidth(4, 92)
         self.meeting_table.setColumnWidth(5, 92)
-        self.meeting_table.setColumnWidth(6, 170)
+        self.meeting_table.setColumnWidth(6, 112)
         if self.meeting_table.rowCount() and self._selected_meeting_folder() is None:
             self.meeting_table.selectRow(0)
         if hasattr(self, "meetings_empty_state"):
@@ -3859,7 +3862,7 @@ class MainWindow(QMainWindow):
                 open_button = QPushButton("Open")
                 open_button.setObjectName("TableActionButton")
                 open_button.setFixedSize(82, 28)
-                open_button.clicked.connect(lambda checked=False, meeting_folder=folder: self.open_meeting_workspace(meeting_folder))
+                open_button.clicked.connect(lambda checked=False, meeting_folder=folder: self.open_meeting_overview(meeting_folder))
                 open_item = QTableWidgetItem("")
                 open_item.setData(Qt.UserRole, str(folder))
                 open_item.setData(Qt.UserRole + 1, action_index)
@@ -4114,7 +4117,7 @@ class MainWindow(QMainWindow):
             self.search_results_table.setItem(row, column, item)
         button = QPushButton("Open meeting")
         button.setObjectName("TableActionButton")
-        button.clicked.connect(lambda checked=False, meeting_folder=folder: self.open_meeting_workspace(meeting_folder))
+        button.clicked.connect(lambda checked=False, meeting_folder=folder: self.open_meeting_overview(meeting_folder))
         open_item = QTableWidgetItem("")
         open_item.setData(Qt.UserRole, str(folder))
         self.search_results_table.setItem(row, 3, open_item)
@@ -4365,6 +4368,7 @@ class MainWindow(QMainWindow):
         transcript_view.setMarkdown(self._transcript_for_display(transcript_path, folder) if transcript_path.exists() else "transcript.md has not been created yet.")
         evidence_tabs.addTab(notes_view, "Structured notes")
         evidence_tabs.addTab(transcript_view, "Transcript evidence")
+        evidence_tabs.setMinimumHeight(280)
         evidence_layout.addWidget(evidence_tabs, stretch=1)
         layout.addWidget(evidence_panel, 1, 0, 1, 2)
 
@@ -4437,7 +4441,7 @@ class MainWindow(QMainWindow):
 
     def _overview_text_card(self, title: str, lines: list[str]) -> QFrame:
         card = QFrame()
-        card.setObjectName("Panel")
+        card.setObjectName("RaisedPanel")
         layout = QVBoxLayout(card)
         layout.setContentsMargins(16, 14, 16, 14)
         layout.setSpacing(8)

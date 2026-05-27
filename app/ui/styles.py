@@ -27,17 +27,17 @@ THEMES = {
         "disabled": "#1A1B1D",
     },
     "clean_light": {
-        "app": "#ECEBE8",
-        "sidebar": "#E3E2DE",
-        "panel": "#F4F3EF",
-        "raised": "#E8E7E3",
-        "field": "#FAF9F5",
-        "text": "#232426",
-        "secondary": "#55585D",
-        "muted": "#777B80",
-        "border": "rgba(35, 36, 38, 0.13)",
-        "soft": "rgba(35, 36, 38, 0.045)",
-        "hover": "#DDDBD6",
+        "app": "#E7E6E2",
+        "sidebar": "#DAD9D4",
+        "panel": "#F1F0EC",
+        "raised": "#E2E1DC",
+        "field": "#F8F7F3",
+        "text": "#202224",
+        "secondary": "#4F5358",
+        "muted": "#73777D",
+        "border": "rgba(32, 34, 36, 0.16)",
+        "soft": "rgba(32, 34, 36, 0.055)",
+        "hover": "#D4D3CE",
         "orange": "#FF7A1A",
         "orange_hover": "#FF8F33",
         "success": "#0E9F6E",
@@ -94,7 +94,7 @@ QFrame#MetricCard {{
 }}
 
 QFrame#LiveCaptureHud {{
-    background-color: {t["soft"]};
+    background-color: {t["raised"]};
     border: 1px solid {t["border"]};
     border-radius: 7px;
 }}
@@ -109,6 +109,12 @@ QFrame#TranscriptRow {{
 QFrame#LiveTranscriptRow {{
     background-color: rgba(255, 138, 31, 0.045);
     border: 1px solid rgba(255, 138, 31, 0.12);
+    border-radius: 7px;
+}}
+
+QFrame#TranscriptEmptyRow {{
+    background-color: {t["soft"]};
+    border: 1px dashed {t["border"]};
     border-radius: 7px;
 }}
 
@@ -201,6 +207,15 @@ QLabel#CompactTimer {{
     color: {t["text"]};
     font-size: 16px;
     font-weight: 800;
+}}
+
+QLabel#LiveStateBadge {{
+    background-color: rgba(61, 220, 132, 0.10);
+    color: {t["success"]};
+    border: 1px solid rgba(61, 220, 132, 0.22);
+    border-radius: 10px;
+    padding: 3px 8px;
+    font-weight: 700;
 }}
 
 QLabel#WorkflowStep {{
