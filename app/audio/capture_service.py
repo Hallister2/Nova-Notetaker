@@ -9,6 +9,9 @@ from typing import Callable
 import numpy as np
 
 
+AudioChunkCallback = Callable[[bytes, int, int], None]
+
+
 @dataclass
 class CaptureConfig:
     meeting_folder: Path
@@ -19,6 +22,7 @@ class CaptureConfig:
     mic_channels: int = 1
     loopback_sample_rate: int = 48000
     loopback_channels: int = 2
+    live_audio_callback: AudioChunkCallback | None = None
 
 
 StatusCallback = Callable[[str], None]
@@ -186,6 +190,7 @@ class CaptureService:
                         audio = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
                         level = float(np.sqrt(np.mean(np.square(audio)))) if audio.size else 0.0
                         self._emit_level("system", min(level * 8, 1.0))
+                        self._emit_live_audio(data, sample_rate, channels)
 
                 self._emit_status(f"System loopback capture saved {chunks_written} audio chunk(s)")
                 if stream.is_active():
@@ -199,3 +204,15 @@ class CaptureService:
                 pa.terminate()
         except Exception as error:
             self._emit_status(f"System loopback capture failed: {error}")
+
+    def _emit_live_audio(self, data: bytes, sample_rate: int, channels: int) -> None:
+        callback = self.config.live_audio_callback
+        if callback is None or not self.callbacks_enabled.is_set():
+            return
+        try:
+            callback(data, sample_rate, channels)
+        except RuntimeError:
+            self.callbacks_enabled.clear()
+        except Exception as error:
+            self._emit_status(f"Live transcript audio stream failed: {error}")
+            self.config.live_audio_callback = None

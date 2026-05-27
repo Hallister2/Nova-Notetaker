@@ -1,73 +1,51 @@
 THEME_LABELS = {
     "executive_dark": "Executive Dark",
-    "clean_light": "Clean Professional",
-    "modern_gradient": "Modern Gradient",
+    "clean_light": "Graphite Light",
 }
 
 
 THEMES = {
     "executive_dark": {
-        "app": "#0F1216",
-        "sidebar": "#14181E",
-        "panel": "#181D24",
-        "raised": "#1D232B",
-        "field": "#151A20",
+        "app": "#101112",
+        "sidebar": "#141516",
+        "panel": "#18191B",
+        "raised": "#202123",
+        "field": "#141516",
         "text": "#F4F6F8",
-        "secondary": "#AAB2BE",
-        "muted": "#6F7782",
-        "border": "rgba(255, 255, 255, 0.07)",
-        "soft": "rgba(255, 255, 255, 0.035)",
-        "hover": "#242B35",
+        "secondary": "#C0C3C7",
+        "muted": "#85888E",
+        "border": "rgba(255, 255, 255, 0.08)",
+        "soft": "rgba(255, 255, 255, 0.04)",
+        "hover": "#292A2D",
         "orange": "#FF8A1F",
         "orange_hover": "#FFA13D",
         "success": "#3DDC84",
         "recording": "#FF4D4D",
         "primary_text": "#16100A",
-        "blue": "#69A7FF",
-        "badge": "#242B35",
-        "disabled": "#171B21",
+        "blue": "#82B6FF",
+        "badge": "#252628",
+        "disabled": "#1A1B1D",
     },
     "clean_light": {
-        "app": "#F6F8FB",
-        "sidebar": "#FFFFFF",
-        "panel": "#FFFFFF",
-        "raised": "#F1F4F8",
-        "field": "#FFFFFF",
-        "text": "#111827",
-        "secondary": "#4B5563",
-        "muted": "#7B8492",
-        "border": "rgba(17, 24, 39, 0.10)",
-        "soft": "rgba(17, 24, 39, 0.035)",
-        "hover": "#E9EEF5",
+        "app": "#ECEBE8",
+        "sidebar": "#E3E2DE",
+        "panel": "#F4F3EF",
+        "raised": "#E8E7E3",
+        "field": "#FAF9F5",
+        "text": "#232426",
+        "secondary": "#55585D",
+        "muted": "#777B80",
+        "border": "rgba(35, 36, 38, 0.13)",
+        "soft": "rgba(35, 36, 38, 0.045)",
+        "hover": "#DDDBD6",
         "orange": "#FF7A1A",
         "orange_hover": "#FF8F33",
         "success": "#0E9F6E",
         "recording": "#E02424",
-        "primary_text": "#FFFFFF",
-        "blue": "#2563EB",
-        "badge": "#EEF2F7",
-        "disabled": "#EEF1F5",
-    },
-    "modern_gradient": {
-        "app": "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #080D24, stop:0.55 #121633, stop:1 #24143D)",
-        "sidebar": "rgba(14, 18, 45, 0.95)",
-        "panel": "rgba(20, 25, 58, 0.92)",
-        "raised": "rgba(32, 28, 72, 0.92)",
-        "field": "rgba(18, 23, 56, 0.94)",
-        "text": "#F8FAFF",
-        "secondary": "#B8C0D9",
-        "muted": "#818BA9",
-        "border": "rgba(255, 255, 255, 0.11)",
-        "soft": "rgba(255, 255, 255, 0.05)",
-        "hover": "rgba(52, 43, 105, 0.95)",
-        "orange": "#FF7A2F",
-        "orange_hover": "#FF9A4D",
-        "success": "#35E78A",
-        "recording": "#FF5B69",
-        "primary_text": "#140B05",
-        "blue": "#7AA7FF",
-        "badge": "rgba(39, 42, 87, 0.96)",
-        "disabled": "rgba(23, 28, 61, 0.95)",
+        "primary_text": "#1C1308",
+        "blue": "#2F6FB7",
+        "badge": "#DFDED9",
+        "disabled": "#E1E0DC",
     },
 }
 
@@ -101,6 +79,18 @@ QFrame#RaisedPanel {{
     background-color: {t["raised"]};
     border: 1px solid {t["border"]};
     border-radius: 8px;
+}}
+
+QFrame#ActionDock {{
+    background-color: {t["raised"]};
+    border: 1px solid {t["border"]};
+    border-radius: 8px;
+}}
+
+QFrame#MetricCard {{
+    background-color: {t["soft"]};
+    border: 1px solid {t["border"]};
+    border-radius: 7px;
 }}
 
 QFrame#TranscriptRow {{
@@ -183,6 +173,16 @@ QLabel#HeroTimer {{
     font-weight: 700;
 }}
 
+QLabel#WorkflowStep {{
+    background-color: rgba(255, 138, 31, 0.10);
+    color: {t["orange"]};
+    border: 1px solid rgba(255, 138, 31, 0.30);
+    border-radius: 12px;
+    padding: 5px 10px;
+    font-size: 12px;
+    font-weight: 800;
+}}
+
 QLabel#OrangeText {{
     color: {t["orange"]};
     font-weight: 700;
@@ -261,9 +261,9 @@ QLabel#StatusBadge[state="complete"] {{
 }}
 
 QLabel#StatusBadge[state="review"] {{
-    background-color: rgba(255, 138, 31, 0.14);
+    background-color: rgba(255, 138, 31, 0.10);
     color: {t["orange"]};
-    border: 1px solid rgba(255, 138, 31, 0.35);
+    border: 1px solid rgba(255, 138, 31, 0.28);
 }}
 
 QLabel#StatusBadge[state="processing"] {{
@@ -301,6 +301,12 @@ QComboBox::drop-down {{
     width: 24px;
 }}
 
+QComboBox::down-arrow {{
+    image: none;
+    width: 0;
+    height: 0;
+}}
+
 QPushButton {{
     background-color: {t["raised"]};
     color: {t["text"]};
@@ -335,9 +341,9 @@ QPushButton#PrimaryButton:hover, QPushButton#DangerButton:hover {{
 }}
 
 QPushButton#TableActionButton {{
-    background-color: rgba(255, 138, 31, 0.16);
+    background-color: rgba(255, 138, 31, 0.10);
     color: {t["orange"]};
-    border: 1px solid rgba(255, 138, 31, 0.55);
+    border: 1px solid rgba(255, 138, 31, 0.38);
     border-radius: 6px;
     padding: 5px 10px;
     font-weight: 700;
@@ -358,19 +364,34 @@ QPushButton#SubtleActionButton {{
     font-size: 11px;
 }}
 
+QFrame#ThemeToggle {{
+    background-color: {t["orange"]};
+    border: 1px solid {t["orange_hover"]};
+    border-radius: 22px;
+}}
+
 QPushButton#ThemeButton {{
-    background-color: {t["raised"]};
-    color: {t["secondary"]};
-    border: 1px solid {t["border"]};
-    border-radius: 7px;
-    padding: 7px 10px;
+    background-color: transparent;
+    color: {t["primary_text"]};
+    border: 0;
+    border-radius: 18px;
+    padding: 9px 20px;
     font-weight: 700;
+    min-width: 72px;
 }}
 
 QPushButton#ThemeButton[active="true"] {{
-    background-color: rgba(255, 138, 31, 0.18);
+    background-color: {t["field"]};
     color: {t["orange"]};
-    border: 1px solid rgba(255, 138, 31, 0.62);
+    border: 0;
+}}
+
+QPushButton#ThemeButton:hover {{
+    background-color: rgba(255, 255, 255, 0.16);
+}}
+
+QPushButton#ThemeButton[active="true"]:hover {{
+    background-color: {t["field"]};
 }}
 
 QPushButton#SidebarButton {{
@@ -455,6 +476,41 @@ QCheckBox#MicToggle[muted="true"] {{
     color: {t["orange"]};
 }}
 
+QCalendarWidget {{
+    background-color: {t["field"]};
+    color: {t["text"]};
+    border: 1px solid {t["border"]};
+    border-radius: 8px;
+}}
+
+QCalendarWidget QWidget {{
+    alternate-background-color: {t["field"]};
+    background-color: {t["field"]};
+    color: {t["text"]};
+}}
+
+QCalendarWidget QToolButton {{
+    background-color: transparent;
+    color: {t["text"]};
+    border: 0;
+    border-radius: 5px;
+    padding: 6px 8px;
+}}
+
+QCalendarWidget QToolButton:hover {{
+    background-color: {t["hover"]};
+}}
+
+QCalendarWidget QMenu {{
+    background-color: {t["panel"]};
+    color: {t["text"]};
+    border: 1px solid {t["border"]};
+}}
+
+QCalendarWidget QSpinBox {{
+    min-width: 72px;
+}}
+
 QTextEdit {{
     background-color: {t["field"]};
     border: 1px solid {t["border"]};
@@ -465,19 +521,35 @@ QTextEdit {{
 
 QTableWidget {{
     background-color: {t["field"]};
+    alternate-background-color: rgba(255, 255, 255, 0.018);
     border: 1px solid {t["border"]};
     border-radius: 8px;
-    gridline-color: {t["border"]};
-    selection-background-color: rgba(255, 138, 31, 0.22);
+    gridline-color: transparent;
+    outline: 0;
+    selection-background-color: rgba(255, 138, 31, 0.09);
 }}
 
 QTableWidget::item {{
-    padding: 6px;
+    border: 0;
+    border-bottom: 1px solid {t["border"]};
+    padding: 6px 10px;
 }}
 
 QTableWidget::item:selected {{
-    background-color: rgba(255, 138, 31, 0.22);
+    background-color: rgba(255, 138, 31, 0.09);
     color: {t["text"]};
+    border: 0;
+    border-bottom: 1px solid rgba(255, 138, 31, 0.18);
+}}
+
+QTableWidget::item:focus {{
+    outline: 0;
+    border: 0;
+    border-bottom: 1px solid rgba(255, 138, 31, 0.18);
+}}
+
+QTableWidget QWidget#Transparent {{
+    background-color: transparent;
 }}
 
 QHeaderView::section {{
@@ -485,8 +557,14 @@ QHeaderView::section {{
     color: {t["secondary"]};
     border: 0;
     border-bottom: 1px solid {t["border"]};
-    padding: 7px;
+    padding: 8px 10px;
     font-weight: 600;
+}}
+
+QTableCornerButton::section {{
+    background-color: {t["raised"]};
+    border: 0;
+    border-bottom: 1px solid {t["border"]};
 }}
 
 QTabWidget::pane {{

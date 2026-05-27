@@ -115,12 +115,12 @@ Current UI structure:
   - Header with theme toggle.
   - Meeting profile selector.
   - Note template selector.
-  - Meeting status card.
+  - Workflow-oriented meeting setup and current-state card.
   - Audio levels.
   - Mic state pill.
-  - Live transcript panel.
-  - Action bar with a single Start Recording / Stop Recording button.
-  - Meeting Insights rail.
+  - Live transcript panel with near-realtime WhisperLive rolling transcript when available.
+  - Bottom action dock with Start/Stop, Open latest, Mark Important, and Add Note.
+  - Meeting Insights rail with operational metrics for open actions, missing owners, due-soon items, and review warnings.
   - Timer shows recording duration during capture, then resets and shows processing duration after stop.
 
 - Meetings page:
@@ -128,6 +128,7 @@ Current UI structure:
   - Date, time, meeting name, status, open action count, review count, Open popout action, and Workspace action.
   - Selected meetings can be deleted.
   - Batch reprocess and exports are available for selected meetings.
+  - Table styling has been normalized to avoid heavy selected-row bands, orange cell slivers, and focus artifacts.
 
 - Search page:
   - Searches meeting titles, notes, transcripts, owners, and dates.
@@ -135,6 +136,9 @@ Current UI structure:
 
 - Calendar page:
   - Dates tab reviews detected calendar candidates by meeting.
+  - The month calendar now has a larger dedicated layout region instead of being squeezed beside the table.
+  - Detected date items render directly on the calendar as day count badges; approved days get an orange visual cue.
+  - Selecting a highlighted date shows a compact summary below the calendar and selects the matching table row.
   - Calendar candidates have an `Approved` checkbox.
   - Date/context cells are editable and saved to per-meeting `calendar_review.json`.
   - Export visible dates exports approved candidates only.
@@ -170,37 +174,43 @@ Current UI structure:
 - Meeting overview workspace:
   - In-app workspace page exists in the main stack.
   - Meetings can open into the workspace from Meetings, Search, Calendar/Actions, or Open latest.
-  - Workspace includes Structured notes, Transcript, and Details tabs.
+  - Workspace is now organized as an executive briefing:
+    - Executive summary
+    - Key decisions
+    - Action items
+    - Dates / follow-ups
+    - Risks / review needed
+    - Structured notes
+    - Transcript evidence
+    - Review controls/details rail
   - Speaker aliases can be edited through Rename Speakers and are applied to transcript display without rewriting `transcript.md`.
 
 ## Theme System
 
-Three themes are implemented:
+Two themes are implemented:
 
 - Executive Dark
   - Current/default theme.
-  - Deep charcoal, refined orange, professional and focused.
+  - Deep charcoal/black surfaces, refined orange accents, professional and focused.
+  - Latest polish moved the palette away from blue/slate and toward neutral graphite surfaces.
+  - Table selection, headers, and embedded table buttons were softened so Meetings, Search, Calendar, Actions, and Templates read consistently.
 
-- Clean Professional
+- Graphite Light
   - Light theme.
   - Intended for office/client/all-day use.
-
-- Modern Gradient
-  - More colorful, navy/indigo/orange direction.
-  - Intended to feel innovative while still business-safe.
+  - Uses graphite whites and muted charcoal surfaces instead of stark white.
 
 Theme switching:
 
-- Three-way toggle at the top of Live Capture:
+- Two-way segmented toggle at the top of Live Capture:
   - Dark
   - Light
-  - Colorful
 - Theme preference is saved in `config/settings.json`.
 - Meeting overview popouts inherit the active theme.
 
 Design team note:
 
-- Light and Gradient themes are functional but likely need a visual polish pass after screenshot review.
+- Graphite Light is functional but likely needs a visual polish pass after screenshot review.
 - Watch text contrast in Markdown previews, tables, disabled controls, and badges.
 
 ## Insights Design
@@ -285,7 +295,7 @@ Potential future insight improvements:
 
 - Add an `insights.json` backfill command for old meetings.
 - Remove unused legacy UI code from `main_window.py`.
-- Add screenshot-based UI QA notes for the three themes.
+- Add screenshot-based UI QA notes for Dark and Graphite Light.
 - Add Outlook/n8n/Planner integration for approved calendar/action items.
 - Add import/export for meeting profiles and note templates.
 - Continue splitting `main_window.py` into page/component modules.
@@ -308,7 +318,7 @@ Potential future insight improvements:
 
 - Screenshot-review the updated Calendar/Actions workspace and in-app Meeting Overview at real Windows scaling.
 - Continue tightening the Ollama prompt if assignments still leak into Key Decisions in generated notes.
-- Implement true near-realtime WhisperLive transcript streaming as the next major functional milestone.
+- Test near-realtime WhisperLive transcript streaming against the real server and tune latency/chunk behavior.
 - Continue decomposing `main_window.py`; `app/ui/review_helpers.py` is only the first extraction.
 
 ## 2026-05-26 Update - Latest Reprocess Review
@@ -483,7 +493,7 @@ When giving design feedback, focus on:
 - Visual hierarchy.
 - Readability at 1366x768 and laptop scale.
 - Whether the insights rail feels helpful or crowded.
-- Whether Light and Colorful themes feel professional enough.
+- Whether Graphite Light feels professional enough.
 - How much Nova brand personality is appropriate without feeling like a sci-fi assistant.
 
 When giving product feedback, focus on:

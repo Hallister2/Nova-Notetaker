@@ -59,9 +59,14 @@ That transition is mostly a UX/design challenge now.
 
 These items appear implemented or far enough along that they should no longer be treated as active design action items:
 
+- Live Capture workflow redesign into clearer setup/state/transcript/action zones.
+- Operational insight-card metrics for open actions, missing owners, due-soon items, and review warnings.
+- Meeting Workspace executive-briefing hierarchy.
+- Initial near-realtime WhisperLive rolling transcript path for system audio.
 - Human-readable Meetings status badges.
 - Calendar approval/edit workflow before `.ics` export.
 - Cross-meeting Actions tab inside the Calendar workspace.
+- Larger Calendar month layout with detected item count badges on date cells.
 - Action status editing.
 - In-app Meeting Overview workspace alongside the popout.
 - Search page for meetings, notes, transcripts, owners, and dates.
@@ -74,6 +79,8 @@ These items appear implemented or far enough along that they should no longer be
 - Settings scroll/layout stabilization.
 - Lightweight meeting index foundation.
 - Layout constraint pass across Meetings, Calendar, Actions, Search, and Settings.
+- Executive Dark charcoal palette refinement.
+- Normalized table styling across Meetings, Search, Calendar, Actions, and Templates.
 - Initial UI Design System document.
 
 These should move into maintenance/polish rather than remaining in future-action lists.
@@ -112,8 +119,7 @@ Target visual inspiration should remain closer to:
 Current themes:
 
 - Executive Dark.
-- Clean Professional.
-- Modern Gradient / Colorful.
+- Graphite Light.
 
 Current assessment:
 
@@ -124,25 +130,22 @@ Executive Dark:
 - Most enterprise-ready.
 - Best balance of contrast and focus.
 - Should remain the flagship/default experience.
+- Latest visual polish shifts it from navy/slate toward graphite charcoal blacks.
+- Table rows now use softer selection, fewer visible grid artifacts, and calmer embedded buttons/badges.
 
-Clean Professional / Light:
+Graphite Light:
 
 - Structurally good.
 - Useful as a daytime/accessibility option.
-- Still feels somewhat flat compared to Executive Dark.
-- Should be refined second, after Dark is stable.
-
-Colorful / Gradient:
-
-- Visually interesting but least corporate.
-- Risks leaning consumer/gaming if overused.
-- Should be treated as experimental or toned down.
+- Softer than the earlier stark white theme.
+- Should use light charcoal/graphite whites rather than pure white panels.
+- Should remain a secondary accessibility/business-day option.
 
 Current recommendation:
 
 - Commit harder to Executive Dark as Nova's main identity.
-- Keep Light as an accessibility/business-day option.
-- Reassess Colorful later. It should not drive the product identity.
+- Keep Graphite Light as an accessibility/business-day option.
+- Colorful mode has been removed from the product direction.
 
 ## Information Architecture Review
 
@@ -503,11 +506,7 @@ Current realistic direction:
 
 - Speaker diarization rather than full Teams identity awareness.
 
-<<<<<<< HEAD
-Recommended future diarization UX:
-=======
 Near-term UX model:
->>>>>>> 2c0455ee8c6408c383e45e8edd54223251854fbf
 
 - Speaker 1.
 - Speaker 2.
@@ -515,7 +514,6 @@ Near-term UX model:
 - You.
 - Meeting Audio.
 
-<<<<<<< HEAD
 Implemented interim UX:
 
 - Post-meeting speaker rename aliases are available for transcript display.
@@ -527,17 +525,12 @@ This preserves:
 - Passive architecture.
 - Simpler infrastructure.
 - Local-first workflow.
-=======
-Already implemented:
-
-- Passive speaker rename aliases for transcript display.
 
 Still future:
 
 - True passive speaker diarization that splits meeting audio into speaker segments.
 - Better speaker confidence indicators.
 - Optional post-meeting speaker assignment review.
->>>>>>> 2c0455ee8c6408c383e45e8edd54223251854fbf
 
 Longer-term possibility:
 
@@ -674,18 +667,43 @@ Highest current design priorities:
 
 Secondary / later priorities:
 
-- Light theme depth refinement.
-- Colorful theme reassessment or toning down.
+- Graphite Light depth refinement.
 - Optional compact mode only if real screen usage shows density problems.
 - Export/print polish for executive meeting summaries.
 
-<<<<<<< HEAD
-## Design System Status
-=======
-## Design System Guidance
+## Next Tackle List
 
-The project now has a UI Design System document.
->>>>>>> 2c0455ee8c6408c383e45e8edd54223251854fbf
+Recommended next implementation order after the latest dark-theme, table, and Calendar refinements:
+
+1. Real-server QA for the near-realtime transcript path.
+   - Confirm WhisperLive accepts the live system-audio stream.
+   - Tune queue sizing, latency, partial/final segment behavior, and fallback messaging.
+   - Keep post-processing transcript as the source of truth until this is proven reliable.
+
+2. Main-window decomposition.
+   - Split `main_window.py` into page/component modules before the next major UI expansion.
+   - Suggested first extracts: Live Capture page, Calendar workspace, Meeting Workspace, Templates page, Settings page.
+
+3. Old meeting insight/index backfill.
+   - Add a utility action or command to rebuild `insights.json` and `meetings/index.json` for older meeting folders.
+   - This will make Search, Calendar, Actions, and Meeting Workspace more reliable across historical data.
+
+4. Theme follow-up pass.
+   - After Dark stabilizes, continue polishing Graphite Light for daytime/business use.
+   - Colorful mode has been removed so the theme system stays focused.
+
+5. Export/print polish.
+   - Add a cleaner executive-summary export path for meetings.
+   - Keep this behind Workspace polish so the exported artifact reflects the right hierarchy.
+
+Lower priority until the core workflow is stronger:
+
+- Outlook/n8n/Planner integrations.
+- Template/profile import/export packs.
+- True passive speaker diarization beyond rename aliases.
+- Team/project tagging and organization memory.
+
+## Design System Status
 
 Continue using it as the source of truth for:
 
@@ -700,8 +718,9 @@ Continue using it as the source of truth for:
 - Animation timing.
 - Density rules.
 
-<<<<<<< HEAD
 Keep the design system current as pages split out of `main_window.py` and new workflows are added.
+
+Design system work should now focus on enforcement and consistency rather than creating the system from scratch.
 
 ## UX Philosophy
 
@@ -724,9 +743,6 @@ Preferred emotional tone:
 Not:
 
 - Futuristic AI showcase.
-=======
-Design system work should now focus on enforcement and consistency rather than creating the system from scratch.
->>>>>>> 2c0455ee8c6408c383e45e8edd54223251854fbf
 
 ## Screen Testing Guidance
 

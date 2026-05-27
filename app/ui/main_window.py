@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import os
+import json
+import queue
 import re
 import shutil
 import sys
+import uuid
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
@@ -12,7 +15,7 @@ import requests
 import websocket
 
 from PySide6.QtCore import QDate, QObject, QSize, QThread, Qt, QTimer, Signal, Slot
-from PySide6.QtGui import QCursor, QIcon, QPixmap, QTextDocument
+from PySide6.QtGui import QColor, QCursor, QIcon, QPainter, QPixmap, QTextDocument
 from PySide6.QtWidgets import (
     QApplication,
     QCalendarWidget,
@@ -54,6 +57,7 @@ from app.core.templates import NoteTemplate, TemplateStore
 from app.intelligence.insights import InsightItem, MeetingInsights, load_or_build_insights, write_insights_json
 from app.storage.meeting_index import write_meeting_index
 from app.storage.meeting_store import MeetingMetadata, MeetingStore
+from app.transcription.whisperlive_client import WhisperLiveClient
 from app.ui.orb_widget import OrbWidget
 from app.ui.review_helpers import (
     apply_speaker_aliases_to_markdown,
@@ -108,6 +112,42 @@ class SortableTableItem(QTableWidgetItem):
         if left is not None and right is not None:
             return str(left) < str(right)
         return super().__lt__(other)
+
+
+class InsightCalendarWidget(QCalendarWidget):
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._items_by_date: dict[str, list[dict[str, object]]] = {}
+
+    def set_items_by_date(self, items_by_date: dict[str, list[dict[str, object]]]) -> None:
+        self._items_by_date = items_by_date
+        self.updateCells()
+
+    def paintCell(self, painter: QPainter, rect, date: QDate) -> None:
+        super().paintCell(painter, rect, date)
+        items = self._items_by_date.get(date.toString("yyyy-MM-dd"), [])
+        if not items:
+            return
+
+        approved = sum(1 for item in items if item.get("approved"))
+        total = len(items)
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        accent = QColor("#FF8A1F" if approved else "#85888E")
+        fill = QColor(accent)
+        fill.setAlpha(52 if approved else 34)
+        badge_rect = rect.adjusted(rect.width() - 29, rect.height() - 21, -5, -5)
+        painter.setPen(accent)
+        painter.setBrush(fill)
+        painter.drawRoundedRect(badge_rect, 7, 7)
+        painter.setPen(accent)
+        painter.drawText(badge_rect, Qt.AlignCenter, str(total))
+        if approved:
+            dot_rect = rect.adjusted(7, rect.height() - 13, -(rect.width() - 14), -7)
+            painter.setBrush(accent)
+            painter.setPen(Qt.NoPen)
+            painter.drawEllipse(dot_rect)
+        painter.restore()
 
 
 def select_combo_by_data(combo: QComboBox, value: str) -> None:
@@ -276,10 +316,12 @@ class ReprocessDialog(QDialog):
 class CaptureWorker(QObject):
     status = Signal(str)
     level = Signal(str, float)
+    audio_chunk = Signal(bytes, int, int)
     stopped = Signal()
 
     def __init__(self, config: CaptureConfig) -> None:
         super().__init__()
+        config.live_audio_callback = self.audio_chunk.emit
         self.service = CaptureService(config, self.status.emit, self.level.emit)
 
     @Slot()
@@ -293,6 +335,155 @@ class CaptureWorker(QObject):
 
     def request_stop(self) -> None:
         self.service.request_stop()
+
+
+class LiveTranscriptionWorker(QObject):
+    status = Signal(str)
+    segment = Signal(str, str, bool)
+    finished = Signal()
+
+    def __init__(self, settings: dict) -> None:
+        super().__init__()
+        transcription = settings.get("transcription", {})
+        self.enabled = bool(transcription.get("enabled", False))
+        self.url = str(transcription.get("whisperlive_url", "")).rstrip("/")
+        self.model = str(transcription.get("model", "small"))
+        self.language = str(transcription.get("language", "en"))
+        self.use_vad = bool(transcription.get("use_vad", True))
+        self.timeout_seconds = int(transcription.get("timeout_seconds", 120))
+        self.client_uid = str(uuid.uuid4())
+        self.audio_queue: queue.Queue[tuple[bytes, int, int] | None] = queue.Queue(maxsize=80)
+        self.stop_requested = False
+        self.seen_segments: set[tuple[str, str, str]] = set()
+
+    @Slot()
+    def run(self) -> None:
+        if not self.enabled:
+            self.status.emit("Live transcript disabled; final transcript will be generated after recording.")
+            self.finished.emit()
+            return
+        if not self.url:
+            self.status.emit("Live transcript unavailable: WhisperLive URL is not configured.")
+            self.finished.emit()
+            return
+
+        parsed = urlparse(self.url)
+        scheme = "wss" if parsed.scheme == "https" else "ws"
+        host = parsed.hostname or self.url.replace("http://", "").replace("https://", "")
+        port = parsed.port or (443 if scheme == "wss" else 80)
+        ws_url = f"{scheme}://{host}:{port}"
+        try:
+            ws = websocket.create_connection(ws_url, timeout=self.timeout_seconds)
+            ws.send(
+                json.dumps(
+                    {
+                        "uid": self.client_uid,
+                        "language": self.language,
+                        "task": "transcribe",
+                        "model": self.model,
+                        "use_vad": self.use_vad,
+                        "send_last_n_segments": 10,
+                        "no_speech_thresh": 0.45,
+                        "clip_audio": False,
+                        "same_output_threshold": 10,
+                        "enable_translation": False,
+                        "target_language": "en",
+                        "hotwords": None,
+                        "enable_diarization": False,
+                        "max_speakers": 10,
+                        "word_timestamps": False,
+                    }
+                )
+            )
+        except Exception as error:
+            self.status.emit(f"Live transcript unavailable: {error}")
+            self.finished.emit()
+            return
+
+        self.status.emit("Live transcript connecting")
+        try:
+            while not self.stop_requested:
+                raw = ws.recv()
+                message = json.loads(raw) if raw else {}
+                if message.get("uid") not in (None, self.client_uid):
+                    continue
+                if message.get("message") == "SERVER_READY":
+                    break
+                if message.get("status") == "ERROR":
+                    raise RuntimeError(str(message.get("message", "WhisperLive server error")))
+            ws.settimeout(0.01)
+            self.status.emit("Live transcript listening")
+            while not self.stop_requested or not self.audio_queue.empty():
+                self._receive_available_segments(ws)
+                try:
+                    queued = self.audio_queue.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+                if queued is None:
+                    break
+                data, sample_rate, channels = queued
+                audio = WhisperLiveClient._pcm_bytes_to_float32(data, 2)
+                if channels > 1:
+                    audio = audio.reshape(-1, channels).mean(axis=1)
+                if sample_rate != 16000:
+                    audio = WhisperLiveClient._resample_linear(audio, sample_rate, 16000)
+                ws.send_binary(audio.astype("float32").tobytes())
+            ws.send("END_OF_AUDIO")
+            for _ in range(20):
+                self._receive_available_segments(ws)
+        except Exception as error:
+            if not self.stop_requested:
+                self.status.emit(f"Live transcript stopped: {error}")
+        finally:
+            try:
+                ws.close()
+            except Exception:
+                pass
+            self.finished.emit()
+
+    @Slot(bytes, int, int)
+    def enqueue_audio(self, data: bytes, sample_rate: int, channels: int) -> None:
+        if self.stop_requested:
+            return
+        try:
+            self.audio_queue.put_nowait((data, sample_rate, channels))
+        except queue.Full:
+            pass
+
+    @Slot()
+    def stop(self) -> None:
+        self.stop_requested = True
+        try:
+            self.audio_queue.put_nowait(None)
+        except queue.Full:
+            pass
+
+    def _receive_available_segments(self, ws: websocket.WebSocket) -> None:
+        while True:
+            try:
+                raw = ws.recv()
+            except websocket.WebSocketTimeoutException:
+                return
+            except Exception:
+                return
+            if not raw:
+                return
+            try:
+                message = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if message.get("uid") not in (None, self.client_uid):
+                continue
+            for segment in message.get("segments", []):
+                text = str(segment.get("text", "")).strip()
+                if not text:
+                    continue
+                key = (str(segment.get("start", "")), str(segment.get("end", "")), text)
+                if key in self.seen_segments:
+                    continue
+                self.seen_segments.add(key)
+                final = bool(segment.get("completed") or segment.get("final"))
+                self.segment.emit("Meeting Audio", text, final)
 
 
 class ProcessingWorker(QObject):
@@ -355,6 +546,9 @@ class MainWindow(QMainWindow):
         self.metadata: MeetingMetadata | None = None
         self.worker_thread: QThread | None = None
         self.worker: CaptureWorker | None = None
+        self.live_transcription_thread: QThread | None = None
+        self.live_transcription_worker: LiveTranscriptionWorker | None = None
+        self.live_transcript_rows: list[tuple[str, str, str, bool]] = []
         self.processing_thread: QThread | None = None
         self.processing_worker: ProcessingWorker | None = None
         self.batch_processing_thread: QThread | None = None
@@ -515,18 +709,19 @@ class MainWindow(QMainWindow):
         return page
 
     def _build_theme_toggle(self) -> QWidget:
-        container = QWidget()
+        container = QFrame()
+        container.setObjectName("ThemeToggle")
         layout = QHBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(0)
         for theme_name, label in (
             ("executive_dark", "Dark"),
             ("clean_light", "Light"),
-            ("modern_gradient", "Colorful"),
         ):
             button = QPushButton(label)
             button.setObjectName("ThemeButton")
             button.setProperty("active", "false")
+            button.setCursor(QCursor(Qt.PointingHandCursor))
             button.clicked.connect(lambda checked=False, selected=theme_name: self.set_theme(selected))
             layout.addWidget(button)
             self.theme_buttons[theme_name] = button
@@ -652,6 +847,8 @@ class MainWindow(QMainWindow):
         self.elapsed_label.setObjectName("HeroTimer")
         self.status_detail_label = self._muted_label("Waiting to start")
         self.orb_caption = self.status_detail_label
+        self.workflow_step_label = QLabel("Setup")
+        self.workflow_step_label.setObjectName("WorkflowStep")
         self.capture_mic_toggle = QCheckBox("Capture microphone")
         self.capture_mic_toggle.setObjectName("MicToggle")
         self.capture_mic_toggle.setChecked(bool(self.settings["audio"].get("capture_mic", True)))
@@ -663,19 +860,20 @@ class MainWindow(QMainWindow):
         self.system_level = QProgressBar()
         self.system_level.setRange(0, 100)
 
-        layout.addWidget(self._section_label("Meeting title"), 0, 0)
-        layout.addWidget(self._section_label("Recording state"), 0, 1)
+        layout.addWidget(self._section_label("Meeting setup"), 0, 0)
+        layout.addWidget(self._section_label("Current state"), 0, 1)
         layout.addWidget(self._section_label("Audio levels"), 0, 2, 1, 2)
         layout.addLayout(title_stack, 1, 0, 3, 1)
-        layout.addWidget(self.status_label, 1, 1)
-        layout.addWidget(self.elapsed_label, 2, 1)
-        layout.addWidget(self.status_detail_label, 3, 1)
+        layout.addWidget(self.workflow_step_label, 1, 1)
+        layout.addWidget(self.status_label, 2, 1)
+        layout.addWidget(self.elapsed_label, 3, 1)
+        layout.addWidget(self.status_detail_label, 4, 1)
         layout.addWidget(QLabel("Mic"), 1, 2)
         layout.addWidget(self.mic_level, 1, 3)
         layout.addWidget(QLabel("System"), 2, 2)
         layout.addWidget(self.system_level, 2, 3)
         layout.addWidget(self.capture_mic_toggle, 3, 2, 1, 2)
-        layout.addWidget(self.settings_summary, 4, 0, 1, 4)
+        layout.addWidget(self.settings_summary, 5, 0, 1, 4)
         layout.setColumnStretch(0, 2)
         layout.setColumnStretch(1, 1)
         layout.setColumnStretch(3, 2)
@@ -689,6 +887,8 @@ class MainWindow(QMainWindow):
         layout.setSpacing(12)
         top = QHBoxLayout()
         top.addWidget(self._section_label("Live transcript"))
+        self.live_transcript_status_label = self._muted_label("Final transcript is generated after recording.")
+        top.addWidget(self.live_transcript_status_label)
         top.addStretch()
         self.speaker_filter = QComboBox()
         self.speaker_filter.addItems(["Speakers", "You", "Meeting Audio"])
@@ -712,7 +912,7 @@ class MainWindow(QMainWindow):
 
     def _build_action_bar(self) -> QFrame:
         bar = QFrame()
-        bar.setObjectName("Panel")
+        bar.setObjectName("ActionDock")
         layout = QHBoxLayout(bar)
         layout.setContentsMargins(24, 14, 24, 14)
         layout.setSpacing(16)
@@ -745,7 +945,19 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(18, 20, 18, 18)
         layout.setSpacing(14)
         layout.addWidget(self._section_label("Meeting insights"))
-        layout.addWidget(self._muted_label("Real-time intelligence"))
+        layout.addWidget(self._muted_label("Operational signals from the current or latest processed meeting."))
+        metrics = QGridLayout()
+        metrics.setHorizontalSpacing(8)
+        metrics.setVerticalSpacing(8)
+        self.live_open_actions_count = QLabel("0")
+        self.live_missing_owner_count = QLabel("0")
+        self.live_due_soon_count = QLabel("0")
+        self.live_review_warning_count = QLabel("0")
+        metrics.addWidget(self._metric_card("Open actions", self.live_open_actions_count), 0, 0)
+        metrics.addWidget(self._metric_card("Missing owner", self.live_missing_owner_count), 0, 1)
+        metrics.addWidget(self._metric_card("Due soon", self.live_due_soon_count), 1, 0)
+        metrics.addWidget(self._metric_card("Review", self.live_review_warning_count), 1, 1)
+        layout.addLayout(metrics)
         self.action_items_count = QLabel("0")
         self.decisions_count = QLabel("0")
         self.dates_count = QLabel("0")
@@ -757,6 +969,19 @@ class MainWindow(QMainWindow):
         layout.addWidget(dates_card)
         layout.addStretch()
         return panel
+
+    def _metric_card(self, label_text: str, value_label: QLabel) -> QFrame:
+        card = QFrame()
+        card.setObjectName("MetricCard")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(3)
+        value_label.setObjectName("StatValue")
+        label = QLabel(label_text)
+        label.setObjectName("Muted")
+        layout.addWidget(value_label)
+        layout.addWidget(label)
+        return card
 
     def _insight_card(self, title: str, count_label: QLabel, items: list[str]) -> tuple[QFrame, QVBoxLayout]:
         card = QFrame()
@@ -803,6 +1028,7 @@ class MainWindow(QMainWindow):
         self.meeting_table.setMinimumWidth(0)
         self.meeting_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.meeting_table.setHorizontalHeaderLabels(["Date", "Time", "Meeting Name", "Status", "Actions", "Review", "Open"])
+        self._configure_table(self.meeting_table)
         self.meeting_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.meeting_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.meeting_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -968,11 +1194,11 @@ class MainWindow(QMainWindow):
         self.action_dashboard_table.setMinimumWidth(0)
         self.action_dashboard_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.action_dashboard_table.setHorizontalHeaderLabels(["Meeting", "Owner", "Action", "Due", "Confidence", "Status", "Open"])
+        self._configure_table(self.action_dashboard_table)
         self.action_dashboard_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.action_dashboard_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.action_dashboard_table.verticalHeader().setVisible(False)
         self.action_dashboard_table.verticalHeader().setDefaultSectionSize(46)
-        self.action_dashboard_table.setWordWrap(False)
         action_header = self.action_dashboard_table.horizontalHeader()
         action_header.setSectionResizeMode(0, QHeaderView.Fixed)
         action_header.setSectionResizeMode(1, QHeaderView.Fixed)
@@ -1023,6 +1249,7 @@ class MainWindow(QMainWindow):
         self.search_results_table.setMinimumWidth(0)
         self.search_results_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.search_results_table.setHorizontalHeaderLabels(["Meeting", "File", "Match", "Open"])
+        self._configure_table(self.search_results_table)
         self.search_results_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.search_results_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.search_results_table.verticalHeader().setVisible(False)
@@ -1076,10 +1303,20 @@ class MainWindow(QMainWindow):
 
         calendar_grid = QGridLayout()
         calendar_grid.setSpacing(16)
-        self.calendar_widget = QCalendarWidget()
+        calendar_side = QWidget()
+        calendar_side.setObjectName("Transparent")
+        calendar_side_layout = QVBoxLayout(calendar_side)
+        calendar_side_layout.setContentsMargins(0, 0, 0, 0)
+        calendar_side_layout.setSpacing(10)
+        self.calendar_widget = InsightCalendarWidget()
         self.calendar_widget.setGridVisible(True)
-        self.calendar_widget.setMinimumWidth(220)
-        calendar_grid.addWidget(self.calendar_widget, 0, 0)
+        self.calendar_widget.setMinimumSize(340, 280)
+        self.calendar_widget.clicked.connect(self._calendar_date_clicked)
+        calendar_side_layout.addWidget(self.calendar_widget, stretch=1)
+        self.calendar_day_summary = self._muted_label("Select a highlighted date to see its meeting items.")
+        self.calendar_day_summary.setWordWrap(True)
+        calendar_side_layout.addWidget(self.calendar_day_summary)
+        calendar_grid.addWidget(calendar_side, 0, 0)
         right_side = QWidget()
         right_layout = QVBoxLayout(right_side)
         right_layout.setContentsMargins(0, 0, 0, 0)
@@ -1092,6 +1329,7 @@ class MainWindow(QMainWindow):
         self.calendar_table.setMinimumWidth(0)
         self.calendar_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.calendar_table.setHorizontalHeaderLabels(["Approved", "Meeting", "Date", "Context", "Confidence"])
+        self._configure_table(self.calendar_table)
         self.calendar_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.calendar_table.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed)
         self.calendar_table.verticalHeader().setVisible(False)
@@ -1106,7 +1344,8 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(self.calendar_empty_state, stretch=1)
         right_layout.addWidget(self.calendar_table, stretch=1)
         calendar_grid.addWidget(right_side, 0, 1)
-        calendar_grid.setColumnStretch(0, 0)
+        calendar_grid.setColumnMinimumWidth(0, 360)
+        calendar_grid.setColumnStretch(0, 1)
         calendar_grid.setColumnStretch(1, 1)
         panel_layout.addLayout(calendar_grid, stretch=1)
         review_tabs.addTab(panel, "Dates")
@@ -1189,6 +1428,7 @@ class MainWindow(QMainWindow):
 
         self.profiles_table = QTableWidget(0, 2)
         self.profiles_table.setHorizontalHeaderLabels(["Profile", "Category"])
+        self._configure_table(self.profiles_table)
         self.profiles_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.profiles_table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.profiles_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -1282,6 +1522,7 @@ class MainWindow(QMainWindow):
 
         self.templates_table = QTableWidget(0, 2)
         self.templates_table.setHorizontalHeaderLabels(["Template", "Category"])
+        self._configure_table(self.templates_table)
         self.templates_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.templates_table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.templates_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -1927,6 +2168,15 @@ class MainWindow(QMainWindow):
         label.setMinimumHeight(24)
         return label
 
+    @staticmethod
+    def _configure_table(table: QTableWidget) -> None:
+        table.setFocusPolicy(Qt.NoFocus)
+        table.setShowGrid(False)
+        table.setAlternatingRowColors(True)
+        table.setWordWrap(False)
+        table.horizontalHeader().setHighlightSections(False)
+        table.verticalHeader().setHighlightSections(False)
+
     def _asset_path(self, file_name: str) -> Path:
         return ASSETS_DIR / file_name
 
@@ -2179,7 +2429,7 @@ class MainWindow(QMainWindow):
             self.template_section_layout.setColumnStretch(0, 1)
             self.template_section_layout.setColumnStretch(1, 2)
 
-    def _set_transcript_rows(self, rows: list[tuple[str, str, str]]) -> None:
+    def _set_transcript_rows(self, rows: list[tuple[str, str, str] | tuple[str, str, str, bool]]) -> None:
         while self.transcript_layout.count():
             item = self.transcript_layout.takeAt(0)
             widget = item.widget()
@@ -2189,7 +2439,9 @@ class MainWindow(QMainWindow):
         if not rows:
             rows = [("--:--:--", "Meeting Audio", "Transcript rows will appear here after capture and processing.")]
 
-        for timestamp, speaker, text in rows:
+        for row_data in rows:
+            timestamp, speaker, text = row_data[:3]
+            is_partial = bool(row_data[3]) if len(row_data) > 3 else False
             row = QFrame()
             row.setObjectName("TranscriptRow")
             row_layout = QGridLayout(row)
@@ -2200,6 +2452,8 @@ class MainWindow(QMainWindow):
             speaker_label.setObjectName("OrangeText" if speaker == "You" else "BlueText")
             text_label = QLabel(text)
             text_label.setWordWrap(True)
+            if is_partial:
+                text_label.setObjectName("Muted")
             row_layout.addWidget(time_label, 0, 0, Qt.AlignTop)
             row_layout.addWidget(speaker_label, 0, 1, Qt.AlignTop)
             row_layout.addWidget(text_label, 1, 1)
@@ -2275,9 +2529,25 @@ class MainWindow(QMainWindow):
 
     def _update_live_insights_from_folder(self, folder: Path) -> None:
         insights = load_or_build_insights(folder)
+        self._update_operational_metrics(insights)
         self._update_insight_group(self.action_items_count, self.live_action_items_layout, insights.actions)
         self._update_insight_group(self.decisions_count, self.live_decisions_layout, insights.decisions)
         self._update_insight_group(self.dates_count, self.live_dates_layout, insights.dates)
+
+    def _update_operational_metrics(self, insights: MeetingInsights | None = None) -> None:
+        insights = insights or MeetingInsights()
+        open_actions = [item for item in insights.actions if (item.status or "open").lower() not in CLOSED_ACTION_STATUSES]
+        missing_owner = [
+            item
+            for item in open_actions
+            if not item.owner or item.owner.strip().lower() in {"unknown", "unassigned", "none"}
+        ]
+        due_soon = [item for item in open_actions if item.due_date and item.due_date.strip().lower() not in {"unknown", "none"}]
+        if hasattr(self, "live_open_actions_count"):
+            self.live_open_actions_count.setText(str(len(open_actions)))
+            self.live_missing_owner_count.setText(str(len(missing_owner)))
+            self.live_due_soon_count.setText(str(len(due_soon)))
+            self.live_review_warning_count.setText(str(len(insights.quality_warnings) + len(insights.warnings)))
 
     def _update_selected_meeting_details(self, folder: Path | None) -> None:
         if folder is None:
@@ -2368,6 +2638,52 @@ class MainWindow(QMainWindow):
             if len(rows) >= 12:
                 break
         self._set_transcript_rows(rows)
+
+    def _start_live_transcription(self) -> None:
+        if self.live_transcription_thread is not None:
+            return
+        self.live_transcript_rows = []
+        self.live_transcription_thread = QThread(self)
+        self.live_transcription_worker = LiveTranscriptionWorker(self.settings)
+        self.live_transcription_worker.moveToThread(self.live_transcription_thread)
+        self.live_transcription_thread.started.connect(self.live_transcription_worker.run)
+        self.live_transcription_worker.status.connect(self._live_transcription_status)
+        self.live_transcription_worker.segment.connect(self._append_live_transcript_segment)
+        self.live_transcription_worker.finished.connect(self.live_transcription_thread.quit)
+        self.live_transcription_worker.finished.connect(self.live_transcription_worker.deleteLater)
+        self.live_transcription_thread.finished.connect(self._live_transcription_finished)
+        self.live_transcription_thread.finished.connect(self.live_transcription_thread.deleteLater)
+        if self.worker is not None:
+            self.worker.audio_chunk.connect(self.live_transcription_worker.enqueue_audio)
+        self.live_transcription_thread.start()
+
+    def _stop_live_transcription(self) -> None:
+        if self.live_transcription_worker is not None:
+            self.live_transcription_worker.stop()
+
+    def _live_transcription_status(self, message: str) -> None:
+        if hasattr(self, "live_transcript_status_label"):
+            self.live_transcript_status_label.setText(message)
+        self.log(message)
+
+    @Slot(str, str, bool)
+    def _append_live_transcript_segment(self, speaker: str, text: str, final: bool) -> None:
+        timestamp = self._recording_offset_label()
+        self.live_transcript_rows.append((timestamp, speaker, text, not final))
+        self.live_transcript_rows = self.live_transcript_rows[-18:]
+        self._set_transcript_rows(self.live_transcript_rows)
+
+    def _live_transcription_finished(self) -> None:
+        self.live_transcription_worker = None
+        self.live_transcription_thread = None
+        if hasattr(self, "live_transcript_status_label") and self.timer_phase != "recording":
+            self.live_transcript_status_label.setText("Final transcript will be refreshed after processing.")
+
+    def _recording_offset_label(self) -> str:
+        if not self.recording_started_at:
+            return "--:--:--"
+        seconds = max(0, int((datetime.now() - self.recording_started_at).total_seconds()))
+        return self._format_duration(seconds)
 
     def _update_elapsed_timer(self) -> None:
         if self.timer_phase == "recording":
@@ -2510,6 +2826,7 @@ class MainWindow(QMainWindow):
         meetings_title.setObjectName("SectionTitle")
         self.meeting_table = QTableWidget(0, 4)
         self.meeting_table.setHorizontalHeaderLabels(["Date", "Time", "Meeting Name", "Status"])
+        self._configure_table(self.meeting_table)
         self.meeting_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.meeting_table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.meeting_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -2694,8 +3011,12 @@ class MainWindow(QMainWindow):
         self.status_label.setText("Recording")
         self._refresh_widget_style(self.status_label)
         self.orb_caption.setText("Recording time")
+        self.workflow_step_label.setText("Recording")
         self.footer_save_label.setText(f"Saving to: {self.meeting_folder}")
-        self._set_transcript_rows([("--:--:--", "Meeting Audio", "Capture is running. Transcript will appear after processing.")])
+        self.live_transcript_rows = []
+        self._update_operational_metrics()
+        self._set_transcript_rows([("--:--:--", "Meeting Audio", "Listening for meeting audio. Live transcript will appear here when WhisperLive is available.", True)])
+        self._start_live_transcription()
         self.log(f"Meeting folder: {self.meeting_folder}")
         self.log(
             "Capture format: "
@@ -2763,6 +3084,8 @@ class MainWindow(QMainWindow):
         self.recording_button.setText("Stopping...")
         self.status_label.setText("Stopping")
         self.orb_caption.setText("Finalizing capture")
+        self.workflow_step_label.setText("Finalizing")
+        self._stop_live_transcription()
         self.log("Stop requested. Waiting for audio streams to close.")
         self.worker.request_stop()
         self.request_worker_stop.emit()
@@ -2789,6 +3112,7 @@ class MainWindow(QMainWindow):
         self.orb.set_state("processing")
         self.status_label.setText("Processing")
         self.orb_caption.setText("Processing time")
+        self.workflow_step_label.setText("Processing")
         self.processing_started_at = datetime.now()
         self.timer_phase = "processing"
         self.elapsed_label.setText("00:00:00")
@@ -3057,6 +3381,7 @@ class MainWindow(QMainWindow):
         self.orb.set_state("idle")
         self.status_label.setObjectName("GreenText")
         self.status_label.setText("Ready")
+        self.workflow_step_label.setText("Review")
         self._refresh_widget_style(self.status_label)
         if processing_seconds:
             hours, remainder = divmod(processing_seconds, 3600)
@@ -3389,6 +3714,7 @@ class MainWindow(QMainWindow):
         has_rows = self.calendar_table.rowCount() > 0
         self.calendar_table.setVisible(has_rows)
         self.calendar_empty_state.setVisible(not has_rows)
+        self._sync_calendar_day_items_from_table()
 
     def _calendar_item_changed(self, item: QTableWidgetItem) -> None:
         if item.column() not in (0, 2, 3):
@@ -3409,6 +3735,68 @@ class MainWindow(QMainWindow):
         entry["context"] = context_item.text().strip() if context_item else ""
         review[str(key)] = entry
         write_calendar_review(folder, review)
+        self._sync_calendar_day_items_from_table()
+
+    def _sync_calendar_day_items_from_table(self) -> None:
+        if not hasattr(self, "calendar_widget"):
+            return
+        items_by_date: dict[str, list[dict[str, object]]] = {}
+        for row in range(self.calendar_table.rowCount()):
+            meeting_item = self.calendar_table.item(row, 1)
+            date_item = self.calendar_table.item(row, 2)
+            context_item = self.calendar_table.item(row, 3)
+            approved_item = self.calendar_table.item(row, 0)
+            confidence_item = self.calendar_table.item(row, 4)
+            if not meeting_item or not date_item:
+                continue
+            folder = Path(str(meeting_item.data(Qt.UserRole) or ""))
+            try:
+                metadata = self.meeting_store.read_metadata(folder)
+            except Exception:
+                metadata = None
+            qdate = self._calendar_qdate_from_text(date_item.text(), metadata)
+            if not qdate or not qdate.isValid():
+                continue
+            key = qdate.toString("yyyy-MM-dd")
+            items_by_date.setdefault(key, []).append(
+                {
+                    "row": row,
+                    "title": meeting_item.text(),
+                    "date": date_item.text(),
+                    "context": context_item.text() if context_item else "",
+                    "approved": approved_item.checkState() == Qt.Checked if approved_item else False,
+                    "confidence": confidence_item.text() if confidence_item else "",
+                }
+            )
+        self.calendar_day_items = items_by_date
+        self.calendar_widget.set_items_by_date(items_by_date)
+        selected_key = self.calendar_widget.selectedDate().toString("yyyy-MM-dd")
+        self._update_calendar_day_summary(selected_key)
+
+    def _calendar_date_clicked(self, date: QDate) -> None:
+        key = date.toString("yyyy-MM-dd")
+        self._update_calendar_day_summary(key)
+        items = getattr(self, "calendar_day_items", {}).get(key, [])
+        if items:
+            row = int(items[0].get("row", 0))
+            self.calendar_table.selectRow(row)
+
+    def _update_calendar_day_summary(self, date_key: str) -> None:
+        if not hasattr(self, "calendar_day_summary"):
+            return
+        items = getattr(self, "calendar_day_items", {}).get(date_key, [])
+        if not items:
+            self.calendar_day_summary.setText("No detected meeting items on this date.")
+            return
+        lines = []
+        for item in items[:3]:
+            status = "approved" if item.get("approved") else "pending"
+            context = str(item.get("context") or "").strip()
+            title = str(item.get("title") or "Meeting")
+            lines.append(f"{title}: {context[:70] or 'Calendar item'} ({status})")
+        if len(items) > 3:
+            lines.append(f"+ {len(items) - 3} more")
+        self.calendar_day_summary.setText("\n".join(lines))
 
     def _calendar_row_selected(self) -> None:
         if not hasattr(self, "calendar_widget"):
@@ -3430,6 +3818,7 @@ class MainWindow(QMainWindow):
         if qdate and qdate.isValid():
             self.calendar_widget.setSelectedDate(qdate)
             self.calendar_widget.showSelectedDate()
+            self._update_calendar_day_summary(qdate.toString("yyyy-MM-dd"))
 
     @staticmethod
     def _calendar_qdate_from_text(text: str, metadata: MeetingMetadata | None) -> QDate | None:
@@ -3684,38 +4073,90 @@ class MainWindow(QMainWindow):
     def _build_meeting_overview_widget(self, folder: Path, metadata: MeetingMetadata) -> QWidget:
         widget = QWidget()
         widget.setObjectName("Transparent")
-        layout = QVBoxLayout(widget)
+        layout = QGridLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
-        # Reuse the popout construction by embedding a compact summary when the workspace loads.
+        layout.setSpacing(16)
         notes_path = folder / "notes.md"
+        transcript_path = folder / "transcript.md"
+        insights = load_or_build_insights(folder)
+
+        briefing_scroll = QScrollArea()
+        briefing_scroll.setWidgetResizable(True)
+        briefing_scroll.setFrameShape(QFrame.NoFrame)
+        briefing_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        briefing = QWidget()
+        briefing.setObjectName("Transparent")
+        briefing_layout = QVBoxLayout(briefing)
+        briefing_layout.setContentsMargins(0, 0, 0, 0)
+        briefing_layout.setSpacing(12)
+
+        summary_lines = self._note_section_lines(notes_path, "summary")
+        briefing_layout.addWidget(self._overview_text_card("Executive summary", summary_lines or ["Summary has not been generated yet."]))
+        briefing_layout.addWidget(self._overview_items_card("Key decisions", insights.decisions, "No decisions detected."))
+        briefing_layout.addWidget(self._overview_items_card("Action items", insights.actions, "No action items detected."))
+        briefing_layout.addWidget(self._overview_items_card("Dates / follow-ups", insights.dates, "No dates detected."))
+        warning_items = insights.quality_warnings + insights.warnings
+        briefing_layout.addWidget(self._overview_text_card("Risks / review needed", warning_items or ["No review warnings."]))
+
+        evidence_tabs = QTabWidget()
         notes_view = QTextEdit()
         notes_view.setReadOnly(True)
         notes_view.setMarkdown(self._notes_for_display(notes_path) if notes_path.exists() else "notes.md has not been created yet.")
         transcript_view = QTextEdit()
         transcript_view.setReadOnly(True)
-        transcript_path = folder / "transcript.md"
         transcript_view.setMarkdown(self._transcript_for_display(transcript_path, folder) if transcript_path.exists() else "transcript.md has not been created yet.")
-        tabs = QTabWidget()
-        tabs.addTab(notes_view, "Structured notes")
-        tabs.addTab(transcript_view, "Transcript")
+        evidence_tabs.addTab(notes_view, "Structured notes")
+        evidence_tabs.addTab(transcript_view, "Transcript evidence")
+        briefing_layout.addWidget(evidence_tabs, stretch=1)
+        briefing_scroll.setWidget(briefing)
+
+        intelligence_scroll = QScrollArea()
+        intelligence_scroll.setWidgetResizable(True)
+        intelligence_scroll.setFrameShape(QFrame.NoFrame)
+        intelligence_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        intelligence_scroll.setMinimumWidth(320)
+        intelligence_scroll.setMaximumWidth(420)
+        intelligence_panel = QFrame()
+        intelligence_panel.setObjectName("Panel")
+        intelligence_layout = QVBoxLayout(intelligence_panel)
+        intelligence_layout.setContentsMargins(16, 16, 16, 16)
+        intelligence_layout.setSpacing(12)
+        intelligence_layout.addWidget(self._section_label("Review controls"))
+        intelligence_layout.addWidget(self._overview_quality_card(metadata, insights))
+        intelligence_layout.addWidget(self._overview_markers_card(folder))
+        intelligence_layout.addWidget(self._overview_action_items_card(folder, insights))
         details = QTextEdit()
         details.setReadOnly(True)
-        insights = load_or_build_insights(folder)
-        details.setPlainText(
-            "\n".join(
-                [
-                    self._format_health_summary(metadata),
-                    "",
-                    f"Open actions: {sum(1 for item in insights.actions if item.status.lower() not in CLOSED_ACTION_STATUSES)}",
-                    f"Decisions: {len(insights.decisions)}",
-                    f"Dates: {len(insights.dates)}",
-                    f"Review warnings: {len(insights.quality_warnings)}",
-                ]
-            )
-        )
-        tabs.addTab(details, "Details")
-        layout.addWidget(tabs, stretch=1)
+        details.setMaximumHeight(150)
+        details.setPlainText(self._format_health_summary(metadata))
+        intelligence_layout.addWidget(self._section_label("Meeting details"))
+        intelligence_layout.addWidget(details)
+        intelligence_layout.addStretch()
+        intelligence_scroll.setWidget(intelligence_panel)
+
+        layout.addWidget(briefing_scroll, 0, 0)
+        layout.addWidget(intelligence_scroll, 0, 1)
+        layout.setColumnStretch(0, 2)
+        layout.setColumnStretch(1, 1)
         return widget
+
+    def _overview_text_card(self, title: str, lines: list[str]) -> QFrame:
+        card = QFrame()
+        card.setObjectName("Panel")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(8)
+        layout.addWidget(self._section_label(title))
+        for line in lines[:6]:
+            label = QLabel(str(line).lstrip("- ").strip())
+            label.setWordWrap(True)
+            layout.addWidget(label)
+        return card
+
+    def _overview_items_card(self, title: str, items: list[InsightItem], empty_text: str) -> QFrame:
+        count_label = QLabel(str(len(items)))
+        card, _items_layout = self._insight_card(title, count_label, items or [empty_text])
+        return card
 
     def open_latest_meeting(self) -> None:
         meetings = self.meeting_store.list_meetings()
