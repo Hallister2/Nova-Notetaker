@@ -687,13 +687,13 @@ Secondary / later priorities:
 
 ## Next Tackle List
 
-Recommended next implementation order after the latest live transcript, workspace, and deletion refinements:
+Recommended next implementation order after the 2026-05-27 live UX and workspace feature pass:
 
-1. Real-server recording regression.
-   - Confirm live transcript appears during recording.
-   - Stop recording and confirm final `transcript.md`, `notes.md`, `insights.json`, and `metadata.json` are written.
-   - Confirm the meeting does not remain in `processing`.
-   - Keep post-processing transcript as the source of truth until this is proven reliable.
+1. Real-meeting Live Capture QA.
+   - Live transcript works, but perceived delay remains the main watch item.
+   - Confirm the highlighted `Now` row and merged transcript rows feel more realtime without hiding important content.
+   - Confirm tentative live candidates are useful and clearly provisional.
+   - Keep final post-processing transcript/notes as the source of truth.
 
 2. Prompt and extraction cleanup.
    - Prevent generated notes from assigning action items to Nova unless Nova truly owns the work.
@@ -708,6 +708,7 @@ Recommended next implementation order after the latest live transcript, workspac
 4. Main-window decomposition.
    - Split `main_window.py` into page/component modules before the next major UI expansion.
    - Suggested first extracts: Live Capture page, Calendar workspace, Meeting Workspace, Templates page, Settings page.
+   - Current first extractions: `app/ui/review_helpers.py` and `app/ui/live_insights.py`.
 
 5. Old meeting insight/index backfill.
    - Add a utility action or command to rebuild `insights.json` and `meetings/index.json` for older or stuck meeting folders.
@@ -718,8 +719,8 @@ Recommended next implementation order after the latest live transcript, workspac
    - Colorful mode has been removed so the theme system stays focused.
 
 7. Export/print polish.
-   - Add a cleaner executive-summary export path for meetings.
-   - Keep this behind Workspace polish so the exported artifact reflects the right hierarchy.
+   - Initial `executive_briefing.html` export exists.
+   - Next pass should focus on visual polish, print layout, and possibly a direct Open/Print affordance.
 
 Lower priority until the core workflow is stronger:
 
@@ -806,6 +807,36 @@ Potential future opportunities that still appear relevant:
 - Cross-meeting unresolved-item tracking.
 - Organization memory/search.
 - Executive summary export/print mode.
+
+## 2026-05-27 UX Notes
+
+- Live transcript:
+  - Confirmed useful in real meeting testing.
+  - Latest design favors a calmer rolling feed:
+    - highlighted `Now` partial row
+    - auto-scroll to latest row
+    - fewer, longer merged transcript rows
+  - Remaining risk is perceived latency from WhisperLive/server/model/VAD behavior, not just UI.
+
+- Live insights:
+  - Tentative candidates are acceptable to Chad.
+  - They should remain clearly provisional until final notes are processed.
+  - The live rail now uses a single roomier Live Candidates panel rather than cramped mini-cards.
+
+- Live Capture layout:
+  - Meeting Setup should stay focused on setup only.
+  - Timer, capture state, mic toggle, and audio meters belong in the Live Transcript HUD.
+  - Bottom action dock order should remain workflow-first:
+    - Start Recording
+    - New Meeting
+    - Open latest meeting
+    - Mark Important
+    - Add Note
+
+- Meeting Workspace:
+  - Top briefing band now exists and is a good direction.
+  - Workspace export now creates `executive_briefing.html`.
+  - Further design polish should make this feel like a client-ready briefing artifact.
 
 ## Communication Notes For Codex / Engineering
 

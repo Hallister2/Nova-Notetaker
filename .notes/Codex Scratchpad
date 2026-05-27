@@ -323,19 +323,18 @@ Potential future insight improvements:
 
 ## Current Next Recommendations
 
-- Run one more real-server recording regression:
-  - record with live transcript visible
-  - stop
-  - confirm final `transcript.md`, `notes.md`, `insights.json`, and `metadata.json` are written
-  - confirm the meeting does not remain in `processing`
+- Continue real-meeting live capture QA:
+  - live transcript is working, but perceived latency is still mostly WhisperLive/server/model behavior
+  - current UI now favors fewer, more stable transcript rows instead of many choppy fragments
+  - watch for over-merged rows or missed partial updates in the next real meeting
 - Tighten the Ollama notes/insights prompt:
   - avoid assigning actions to Nova unless Nova truly owns the work
   - keep confidence as its own field instead of appending `(High)` to dates/due text
   - reduce invented owners and due dates
 - Add visible processing-failure and retry UX in the Meetings table/workspace.
 - Add a repair/backfill utility for older meetings and any folders stuck in partial states.
-- Screenshot-review Live Capture's setup collapse and the revised Meeting Workspace hierarchy at real Windows scaling.
-- Continue decomposing `main_window.py`; `app/ui/review_helpers.py` is only the first extraction.
+- Screenshot-review the revised Live Capture setup/transcript/insights layout and Meeting Workspace export flow at real Windows scaling.
+- Continue decomposing `main_window.py`; `app/ui/review_helpers.py` and `app/ui/live_insights.py` are the first extractions.
 
 ## 2026-05-26 Update - Latest Reprocess Review
 
@@ -653,4 +652,64 @@ Remaining roadmap items:
 - Verification:
   - `py_compile` passed for changed files.
   - Full test discovery passed: 34 tests OK.
+
+## 2026-05-27 Update - Live UX and Workspace Feature Pass
+
+- Live Capture / realtime transcript:
+  - Live transcript is confirmed working against a real meeting.
+  - UI now favors fewer, more stable rows:
+    - short same-speaker segments merge into longer rows
+    - partial live text renders as a highlighted `Now` row
+    - transcript auto-scrolls to the newest row
+  - WhisperLive live settings were reduced from larger repeated-history values to smaller values:
+    - `send_last_n_segments` now uses `4`
+    - `same_output_threshold` now uses `4`
+  - This should reduce repeated stale chunks, but perceived lag is still mostly WhisperLive/server/model/VAD behavior.
+
+- Tentative live insights:
+  - Added `app/ui/live_insights.py`.
+  - Live candidates are now extracted from finalized live transcript rows and marked `Tentative`.
+  - Candidate insight logic remains local/UI-only; it does not write tentative items to `insights.json`.
+  - Live candidates are grouped in one roomier panel instead of three cramped preview cards.
+  - Added `tests/test_live_insights.py`.
+
+- Live Capture layout polish:
+  - Meeting Setup was simplified to setup fields only:
+    - Meeting title
+    - Meeting profile
+    - Note template
+    - compact settings summary
+  - Timer, state, mic toggle, and audio meters now live in the Live Transcript HUD.
+  - Meeting Setup field labels were moved into explicit field blocks to avoid overlap at real Windows scaling.
+  - Bottom action dock order is now:
+    - Start Recording
+    - New Meeting
+    - Open latest meeting
+    - Mark Important
+    - Add Note
+  - Dark/Light theme selector was slimmed down and made visually quieter.
+
+- Meetings / Calendar layout:
+  - Meetings row height and embedded action button sizing were increased to avoid clipped table contents.
+  - Calendar Dates layout now stacks the calendar above a full-width review table so the table is readable.
+
+- Meeting Workspace:
+  - Added a top briefing band with Executive summary and Follow-up status.
+  - Added `Export briefing` action to the workspace header.
+  - Added per-meeting `executive_briefing.html` export containing summary, metrics, decisions, actions, dates, and review warnings.
+  - Existing raw notes HTML export still exists as `notes.html`.
+
+- Main-window decomposition:
+  - `app/ui/live_insights.py` is now the second meaningful extraction from `main_window.py`.
+  - `app/ui/review_helpers.py` remains the first extraction.
+  - More page-level extraction is still recommended once the Live Capture/Workspace surfaces settle.
+
+- Verification:
+  - `py_compile` passed for changed files.
+  - Full test discovery passed: 36 tests OK.
+  - Offscreen app smoke check passed at approximately Chad's current window size (`1766x1004`).
+
+- Working tree note:
+  - `config/settings.json` may show `selected_template_id = executive_summary`.
+  - This appears to be Chad's active app preference, not generated test noise.
 

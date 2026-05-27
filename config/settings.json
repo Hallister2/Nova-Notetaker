@@ -3,7 +3,7 @@
     "name": "Nova Notetaker",
     "theme": "executive_dark",
     "selected_profile_id": "general",
-    "selected_template_id": "standard"
+    "selected_template_id": "executive_summary"
   },
   "audio": {
     "mic_device_name": "__default_microphone__",

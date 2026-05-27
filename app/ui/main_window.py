@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import os
 import json
 import queue
@@ -60,6 +61,11 @@ from app.storage.meeting_index import write_meeting_index
 from app.storage.meeting_store import MeetingMetadata, MeetingStore
 from app.transcription.whisperlive_client import WhisperLiveClient
 from app.ui.orb_widget import OrbWidget
+from app.ui.live_insights import (
+    append_or_merge_live_row,
+    clean_live_segment_text,
+    tentative_insights_from_live_rows,
+)
 from app.ui.review_helpers import (
     apply_speaker_aliases_to_markdown,
     candidate_key,
@@ -383,10 +389,10 @@ class LiveTranscriptionWorker(QObject):
                         "task": "transcribe",
                         "model": self.model,
                         "use_vad": self.use_vad,
-                        "send_last_n_segments": 10,
+                        "send_last_n_segments": 4,
                         "no_speech_thresh": 0.45,
                         "clip_audio": False,
-                        "same_output_threshold": 10,
+                        "same_output_threshold": 4,
                         "enable_translation": False,
                         "target_language": "en",
                         "hotwords": None,
@@ -561,6 +567,7 @@ class MainWindow(QMainWindow):
         self.live_transcription_thread: QThread | None = None
         self.live_transcription_worker: LiveTranscriptionWorker | None = None
         self.live_transcript_rows: list[tuple[str, str, str, bool]] = []
+        self.live_tentative_insights = MeetingInsights()
         self.pending_processing_job: tuple[Path, MeetingMetadata, str] | None = None
         self.processing_thread: QThread | None = None
         self.processing_worker: ProcessingWorker | None = None
@@ -682,7 +689,7 @@ class MainWindow(QMainWindow):
         page = QWidget()
         layout = QVBoxLayout(page)
         self.live_page_layout = layout
-        layout.setContentsMargins(34, 28, 18, 28)
+        layout.setContentsMargins(34, 28, 18, 22)
         layout.setSpacing(18)
 
         header = QHBoxLayout()
@@ -718,7 +725,7 @@ class MainWindow(QMainWindow):
         self.insights_panel = self._build_insights_panel()
         main_grid.addWidget(self.insights_panel, 0, 1)
         main_grid.setColumnStretch(0, 1)
-        main_grid.setColumnMinimumWidth(1, 380)
+        main_grid.setColumnMinimumWidth(1, 340)
         layout.addLayout(main_grid, stretch=1)
         return page
 
@@ -726,8 +733,8 @@ class MainWindow(QMainWindow):
         container = QFrame()
         container.setObjectName("ThemeToggle")
         layout = QHBoxLayout(container)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(0)
+        layout.setContentsMargins(2, 2, 2, 2)
+        layout.setSpacing(2)
         for theme_name, label in (
             ("executive_dark", "Dark"),
             ("clean_light", "Light"),
@@ -736,6 +743,7 @@ class MainWindow(QMainWindow):
             button.setObjectName("ThemeButton")
             button.setProperty("active", "false")
             button.setCursor(QCursor(Qt.PointingHandCursor))
+            button.setFixedSize(58, 28)
             button.clicked.connect(lambda checked=False, selected=theme_name: self.set_theme(selected))
             layout.addWidget(button)
             self.theme_buttons[theme_name] = button
@@ -828,10 +836,9 @@ class MainWindow(QMainWindow):
     def _build_meeting_status_card(self) -> QFrame:
         card = QFrame()
         card.setObjectName("Panel")
-        layout = QGridLayout(card)
+        layout = QVBoxLayout(card)
         layout.setContentsMargins(22, 20, 22, 20)
-        layout.setHorizontalSpacing(28)
-        layout.setVerticalSpacing(8)
+        layout.setSpacing(12)
 
         self.meeting_title = QLineEdit()
         self.meeting_title.setPlaceholderText("Meeting title")
@@ -840,21 +847,23 @@ class MainWindow(QMainWindow):
         self.detect_title_button.clicked.connect(self.detect_active_window_title)
 
         title_stack = QVBoxLayout()
-        title_stack.setSpacing(8)
-        self.meeting_title.setMinimumWidth(360)
+        title_stack.setSpacing(12)
+        self.meeting_title.setMinimumWidth(0)
+        self.meeting_title.setMinimumHeight(38)
         self.profile_combo = QComboBox()
+        self.profile_combo.setMinimumHeight(38)
         self._populate_profile_combo()
         self.profile_combo.currentIndexChanged.connect(self._profile_selection_changed)
         self.template_combo = QComboBox()
+        self.template_combo.setMinimumHeight(38)
         self._populate_template_combo()
         self.template_combo.currentIndexChanged.connect(self._template_selection_changed)
-        title_stack.addWidget(self.meeting_title)
-        title_stack.addWidget(self._muted_label("Meeting profile"))
-        title_stack.addWidget(self.profile_combo)
-        title_stack.addWidget(self._muted_label("Note template"))
-        title_stack.addWidget(self.template_combo)
+        title_stack.addWidget(self._field_block("Meeting title", self.meeting_title))
+        title_stack.addWidget(self._field_block("Meeting profile", self.profile_combo))
+        title_stack.addWidget(self._field_block("Note template", self.template_combo))
         title_stack.addWidget(self.detect_title_button, alignment=Qt.AlignLeft)
 
+        # Kept for state updates while the visible capture state lives in the transcript HUD.
         self.status_label = QLabel("Ready")
         self.status_label.setObjectName("GreenText")
         self.elapsed_label = QLabel("00:00:00")
@@ -871,26 +880,14 @@ class MainWindow(QMainWindow):
         self.settings_summary = self._muted_label("")
         self.mic_level = QProgressBar()
         self.mic_level.setRange(0, 100)
+        self.mic_level.setTextVisible(False)
         self.system_level = QProgressBar()
         self.system_level.setRange(0, 100)
+        self.system_level.setTextVisible(False)
 
-        layout.addWidget(self._section_label("Meeting setup"), 0, 0)
-        layout.addWidget(self._section_label("Current state"), 0, 1)
-        layout.addWidget(self._section_label("Audio levels"), 0, 2, 1, 2)
-        layout.addLayout(title_stack, 1, 0, 3, 1)
-        layout.addWidget(self.workflow_step_label, 1, 1)
-        layout.addWidget(self.status_label, 2, 1)
-        layout.addWidget(self.elapsed_label, 3, 1)
-        layout.addWidget(self.status_detail_label, 4, 1)
-        layout.addWidget(QLabel("Mic"), 1, 2)
-        layout.addWidget(self.mic_level, 1, 3)
-        layout.addWidget(QLabel("System"), 2, 2)
-        layout.addWidget(self.system_level, 2, 3)
-        layout.addWidget(self.capture_mic_toggle, 3, 2, 1, 2)
-        layout.addWidget(self.settings_summary, 5, 0, 1, 4)
-        layout.setColumnStretch(0, 2)
-        layout.setColumnStretch(1, 1)
-        layout.setColumnStretch(3, 2)
+        layout.addWidget(self._section_label("Meeting setup"))
+        layout.addLayout(title_stack)
+        layout.addWidget(self.settings_summary)
         return card
 
     def _build_transcript_card(self) -> QFrame:
@@ -911,6 +908,34 @@ class MainWindow(QMainWindow):
         top.addWidget(self.speaker_filter)
         top.addWidget(self.pause_button)
         layout.addLayout(top)
+
+        hud = QFrame()
+        hud.setObjectName("LiveCaptureHud")
+        hud_layout = QGridLayout(hud)
+        hud_layout.setContentsMargins(12, 8, 12, 8)
+        hud_layout.setHorizontalSpacing(12)
+        hud_layout.setVerticalSpacing(4)
+        self.live_elapsed_label = QLabel("00:00:00")
+        self.live_elapsed_label.setObjectName("CompactTimer")
+        self.live_state_label = self._muted_label("Ready")
+        self.live_mic_level = QProgressBar()
+        self.live_mic_level.setRange(0, 100)
+        self.live_mic_level.setTextVisible(False)
+        self.live_mic_level.setMinimumWidth(150)
+        self.live_system_level = QProgressBar()
+        self.live_system_level.setRange(0, 100)
+        self.live_system_level.setTextVisible(False)
+        self.live_system_level.setMinimumWidth(150)
+        hud_layout.addWidget(self.live_elapsed_label, 0, 0, 2, 1)
+        hud_layout.addWidget(self.live_state_label, 0, 1, 2, 1)
+        hud_layout.addWidget(QLabel("Mic"), 0, 2)
+        hud_layout.addWidget(self.live_mic_level, 0, 3)
+        hud_layout.addWidget(QLabel("System"), 1, 2)
+        hud_layout.addWidget(self.live_system_level, 1, 3)
+        hud_layout.addWidget(self.capture_mic_toggle, 0, 4, 2, 1)
+        hud_layout.setColumnMinimumWidth(3, 160)
+        hud_layout.setColumnStretch(3, 1)
+        layout.addWidget(hud)
 
         self.transcript_scroll = QScrollArea()
         self.transcript_scroll.setWidgetResizable(True)
@@ -946,23 +971,26 @@ class MainWindow(QMainWindow):
         self.add_note_button = QPushButton("Add Note")
         self.add_note_button.setEnabled(False)
         self.add_note_button.clicked.connect(self.add_current_meeting_note)
-        layout.addWidget(self.mark_important_button)
+        layout.addWidget(self.recording_button, stretch=1)
         layout.addWidget(self.new_meeting_button)
         layout.addWidget(self.open_latest_button)
-        layout.addWidget(self.recording_button, stretch=1)
+        layout.addWidget(self.mark_important_button)
         layout.addWidget(self.add_note_button)
         return bar
 
     def _build_insights_panel(self) -> QFrame:
         panel = QFrame()
         panel.setObjectName("Panel")
-        panel.setFixedWidth(390)
+        panel.setMaximumWidth(390)
         panel.setMinimumWidth(300)
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(18, 20, 18, 18)
         layout.setSpacing(14)
         layout.addWidget(self._section_label("Meeting insights"))
-        layout.addWidget(self._muted_label("Operational signals from the current or latest processed meeting."))
+        self.live_insights_context_label = self._muted_label(
+            "Live transcript is realtime. Actions, decisions, and dates fill in after notes are processed."
+        )
+        layout.addWidget(self.live_insights_context_label)
         metrics = QGridLayout()
         metrics.setHorizontalSpacing(8)
         metrics.setVerticalSpacing(8)
@@ -978,14 +1006,43 @@ class MainWindow(QMainWindow):
         self.action_items_count = QLabel("0")
         self.decisions_count = QLabel("0")
         self.dates_count = QLabel("0")
-        action_card, self.live_action_items_layout = self._insight_card("Action items", self.action_items_count, ["Waiting for notes generation"])
-        decision_card, self.live_decisions_layout = self._insight_card("Key decisions", self.decisions_count, ["Waiting for notes generation"])
-        dates_card, self.live_dates_layout = self._insight_card("Dates detected", self.dates_count, ["Waiting for notes generation"])
-        layout.addWidget(action_card)
-        layout.addWidget(decision_card)
-        layout.addWidget(dates_card)
+        candidates_card = QFrame()
+        candidates_card.setObjectName("RaisedPanel")
+        candidates_layout = QVBoxLayout(candidates_card)
+        candidates_layout.setContentsMargins(16, 14, 16, 14)
+        candidates_layout.setSpacing(9)
+        candidates_header = QHBoxLayout()
+        candidates_header.addWidget(self._section_label("Live candidates"))
+        candidates_header.addStretch()
+        candidates_layout.addLayout(candidates_header)
+        self.live_action_items_layout = QVBoxLayout()
+        self.live_action_items_layout.setSpacing(7)
+        self.live_decisions_layout = QVBoxLayout()
+        self.live_decisions_layout.setSpacing(7)
+        self.live_dates_layout = QVBoxLayout()
+        self.live_dates_layout.setSpacing(7)
+        candidates_layout.addWidget(self._candidate_group_header("Action items", self.action_items_count))
+        candidates_layout.addLayout(self.live_action_items_layout)
+        candidates_layout.addWidget(self._candidate_group_header("Key decisions", self.decisions_count))
+        candidates_layout.addLayout(self.live_decisions_layout)
+        candidates_layout.addWidget(self._candidate_group_header("Dates detected", self.dates_count))
+        candidates_layout.addLayout(self.live_dates_layout)
+        layout.addWidget(candidates_card, stretch=1)
         layout.addStretch()
         return panel
+
+    def _candidate_group_header(self, text: str, count_label: QLabel) -> QWidget:
+        row = QWidget()
+        row.setObjectName("Transparent")
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 4, 0, 0)
+        label = QLabel(text)
+        label.setObjectName("SectionTitle")
+        count_label.setObjectName("OrangeText")
+        layout.addWidget(label)
+        layout.addStretch()
+        layout.addWidget(count_label)
+        return row
 
     def _metric_card(self, label_text: str, value_label: QLabel) -> QFrame:
         card = QFrame()
@@ -1018,9 +1075,10 @@ class MainWindow(QMainWindow):
         items_layout.setSpacing(7)
         layout.addLayout(items_layout)
         self._set_insight_items(items_layout, items)
-        link = QLabel(f"View all {title.lower()}")
-        link.setObjectName("OrangeText")
-        layout.addWidget(link, alignment=Qt.AlignRight)
+        if not title.lower().startswith("live"):
+            link = QLabel(f"View all {title.lower()}")
+            link.setObjectName("OrangeText")
+            layout.addWidget(link, alignment=Qt.AlignRight)
         return card, items_layout
 
     def _build_meetings_page(self) -> QWidget:
@@ -1063,8 +1121,8 @@ class MainWindow(QMainWindow):
         self.meeting_table.setColumnWidth(3, 150)
         self.meeting_table.setColumnWidth(4, 76)
         self.meeting_table.setColumnWidth(5, 76)
-        self.meeting_table.setColumnWidth(6, 178)
-        self.meeting_table.verticalHeader().setDefaultSectionSize(44)
+        self.meeting_table.setColumnWidth(6, 170)
+        self.meeting_table.verticalHeader().setDefaultSectionSize(46)
         filters = QHBoxLayout()
         filters.setSpacing(10)
         self.meeting_filter_combo = QComboBox()
@@ -1086,8 +1144,8 @@ class MainWindow(QMainWindow):
         self.batch_reprocess_button.clicked.connect(self.batch_reprocess_selected_meetings)
         self.open_folder_button = QPushButton("Open folder")
         self.open_folder_button.clicked.connect(self.open_selected_meeting_folder)
-        self.export_html_button = QPushButton("Export HTML")
-        self.export_html_button.clicked.connect(self.export_selected_notes_html)
+        self.export_html_button = QPushButton("Export briefing")
+        self.export_html_button.clicked.connect(self.export_selected_executive_briefing)
         self.export_calendar_button = QPushButton("Export calendar")
         self.export_calendar_button.clicked.connect(self.export_selected_calendar_ics)
         self.delete_meeting_button = QPushButton("Delete selected")
@@ -1327,7 +1385,7 @@ class MainWindow(QMainWindow):
         calendar_side_layout.setSpacing(10)
         self.calendar_widget = InsightCalendarWidget()
         self.calendar_widget.setGridVisible(True)
-        self.calendar_widget.setMinimumSize(340, 280)
+        self.calendar_widget.setMinimumSize(420, 300)
         self.calendar_widget.clicked.connect(self._calendar_date_clicked)
         calendar_side_layout.addWidget(self.calendar_widget, stretch=1)
         self.calendar_day_summary = self._muted_label("Select a highlighted date to see its meeting items.")
@@ -1344,6 +1402,7 @@ class MainWindow(QMainWindow):
         )
         self.calendar_table = QTableWidget(0, 5)
         self.calendar_table.setMinimumWidth(0)
+        self.calendar_table.setMinimumHeight(240)
         self.calendar_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.calendar_table.setHorizontalHeaderLabels(["Approved", "Meeting", "Date", "Context", "Confidence"])
         self._configure_table(self.calendar_table)
@@ -1353,17 +1412,21 @@ class MainWindow(QMainWindow):
         self.calendar_table.itemSelectionChanged.connect(self._calendar_row_selected)
         self.calendar_table.itemChanged.connect(self._calendar_item_changed)
         calendar_table_header = self.calendar_table.horizontalHeader()
-        calendar_table_header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        calendar_table_header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        calendar_table_header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        calendar_table_header.setSectionResizeMode(0, QHeaderView.Fixed)
+        calendar_table_header.setSectionResizeMode(1, QHeaderView.Fixed)
+        calendar_table_header.setSectionResizeMode(2, QHeaderView.Fixed)
         calendar_table_header.setSectionResizeMode(3, QHeaderView.Stretch)
-        calendar_table_header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        calendar_table_header.setSectionResizeMode(4, QHeaderView.Fixed)
+        self.calendar_table.setColumnWidth(0, 96)
+        self.calendar_table.setColumnWidth(1, 240)
+        self.calendar_table.setColumnWidth(2, 170)
+        self.calendar_table.setColumnWidth(4, 110)
         right_layout.addWidget(self.calendar_empty_state, stretch=1)
         right_layout.addWidget(self.calendar_table, stretch=1)
-        calendar_grid.addWidget(right_side, 0, 1)
-        calendar_grid.setColumnMinimumWidth(0, 360)
+        calendar_grid.addWidget(right_side, 1, 0)
         calendar_grid.setColumnStretch(0, 1)
-        calendar_grid.setColumnStretch(1, 1)
+        calendar_grid.setRowStretch(0, 2)
+        calendar_grid.setRowStretch(1, 1)
         panel_layout.addLayout(calendar_grid, stretch=1)
         review_tabs.addTab(panel, "Dates")
         review_tabs.addTab(self._build_actions_page(embedded=True), "Actions")
@@ -2154,6 +2217,8 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(28, 0, 28, 0)
         self.footer_save_label = QLabel("Saving to: meetings")
         self.footer_save_label.setObjectName("Subtitle")
+        self.footer_save_label.setMinimumWidth(0)
+        self.footer_save_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.footer_autosave_label = QLabel("Auto-save: ON")
         self.footer_autosave_label.setObjectName("Subtitle")
         self.footer_transcription_label = QLabel("Transcription: WhisperLive")
@@ -2175,6 +2240,28 @@ class MainWindow(QMainWindow):
         label.setObjectName("SectionTitle")
         return label
 
+    @staticmethod
+    def _field_label(text: str) -> QLabel:
+        label = QLabel(text)
+        label.setObjectName("FieldLabel")
+        return label
+
+    def _field_block(self, label_text: str, control: QWidget) -> QWidget:
+        block = QWidget()
+        block.setObjectName("Transparent")
+        block.setMinimumHeight(66)
+        block.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        control.setMinimumHeight(38)
+        control.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        layout = QVBoxLayout(block)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        label = self._field_label(label_text)
+        label.setMinimumHeight(16)
+        layout.addWidget(label)
+        layout.addWidget(control)
+        return block
+
     def _status_badge(self, text: str) -> QLabel:
         label = QLabel(text)
         label.setObjectName("StatusBadge")
@@ -2182,7 +2269,7 @@ class MainWindow(QMainWindow):
         label.setAlignment(Qt.AlignCenter)
         label.setMinimumWidth(130)
         label.setMaximumWidth(156)
-        label.setMinimumHeight(24)
+        label.setMinimumHeight(26)
         return label
 
     @staticmethod
@@ -2460,17 +2547,17 @@ class MainWindow(QMainWindow):
             timestamp, speaker, text = row_data[:3]
             is_partial = bool(row_data[3]) if len(row_data) > 3 else False
             row = QFrame()
-            row.setObjectName("TranscriptRow")
+            row.setObjectName("LiveTranscriptRow" if is_partial else "TranscriptRow")
             row_layout = QGridLayout(row)
-            row_layout.setContentsMargins(12, 11, 12, 11)
+            row_layout.setContentsMargins(12, 9, 12, 9)
             row_layout.setHorizontalSpacing(12)
-            time_label = self._muted_label(timestamp)
+            time_label = self._muted_label("Now" if is_partial else timestamp)
             speaker_label = QLabel(speaker)
             speaker_label.setObjectName("OrangeText" if speaker == "You" else "BlueText")
             text_label = QLabel(text)
             text_label.setWordWrap(True)
             if is_partial:
-                text_label.setObjectName("Muted")
+                text_label.setObjectName("LivePartialText")
             row_layout.addWidget(time_label, 0, 0, Qt.AlignTop)
             row_layout.addWidget(speaker_label, 0, 1, Qt.AlignTop)
             row_layout.addWidget(text_label, 1, 1)
@@ -2479,6 +2566,12 @@ class MainWindow(QMainWindow):
             row_layout.setColumnStretch(1, 1)
             self.transcript_layout.addWidget(row)
         self.transcript_layout.addStretch()
+        QTimer.singleShot(0, self._scroll_live_transcript_to_bottom)
+
+    def _scroll_live_transcript_to_bottom(self) -> None:
+        if hasattr(self, "transcript_scroll"):
+            scrollbar = self.transcript_scroll.verticalScrollBar()
+            scrollbar.setValue(scrollbar.maximum())
 
     def _set_insight_items(self, layout: QVBoxLayout, items: list[str | InsightItem]) -> None:
         while layout.count():
@@ -2488,9 +2581,34 @@ class MainWindow(QMainWindow):
                 widget.deleteLater()
         for item_text in items[:5] or ["None detected yet"]:
             if isinstance(item_text, InsightItem):
-                layout.addWidget(self._insight_item_widget(item_text))
+                layout.addWidget(self._insight_preview_widget(item_text))
             else:
-                layout.addWidget(self._muted_label(f"- {item_text}"))
+                label = self._muted_label(f"- {item_text}")
+                label.setObjectName("InsightPreviewText")
+                layout.addWidget(label)
+
+    def _insight_preview_widget(self, item: InsightItem) -> QWidget:
+        container = QFrame()
+        container.setObjectName("InsightPreview")
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setSpacing(5)
+        title = QLabel(self._compact_insight_text(item.display_text))
+        title.setObjectName("InsightPreviewText")
+        title.setWordWrap(True)
+        layout.addWidget(title)
+        badges = QHBoxLayout()
+        badges.setSpacing(5)
+        for value, kind in (
+            (item.owner if item.kind == "action" else "", "owner"),
+            (item.due_date if item.kind in {"action", "date"} else "", "date"),
+            (item.confidence, f"confidence-{item.confidence.lower()}"),
+        ):
+            if value:
+                badges.addWidget(self._badge_label(value, kind))
+        badges.addStretch()
+        layout.addLayout(badges)
+        return container
 
     def _insight_item_widget(self, item: InsightItem) -> QWidget:
         container = QFrame()
@@ -2546,6 +2664,8 @@ class MainWindow(QMainWindow):
 
     def _update_live_insights_from_folder(self, folder: Path) -> None:
         insights = load_or_build_insights(folder)
+        if hasattr(self, "live_insights_context_label"):
+            self.live_insights_context_label.setText("Latest processed meeting insights.")
         self._update_operational_metrics(insights)
         self._update_insight_group(self.action_items_count, self.live_action_items_layout, insights.actions)
         self._update_insight_group(self.decisions_count, self.live_decisions_layout, insights.decisions)
@@ -2685,10 +2805,28 @@ class MainWindow(QMainWindow):
 
     @Slot(str, str, bool)
     def _append_live_transcript_segment(self, speaker: str, text: str, final: bool) -> None:
+        text = clean_live_segment_text(text)
+        if not text:
+            return
         timestamp = self._recording_offset_label()
-        self.live_transcript_rows.append((timestamp, speaker, text, not final))
+        is_partial = not final
+        append_or_merge_live_row(self.live_transcript_rows, timestamp, speaker, text, is_partial)
         self.live_transcript_rows = self.live_transcript_rows[-18:]
         self._set_transcript_rows(self.live_transcript_rows)
+        self._update_tentative_live_insights()
+
+    def _update_tentative_live_insights(self) -> None:
+        if self.timer_phase != "recording":
+            return
+        insights = tentative_insights_from_live_rows(self.live_transcript_rows)
+        self.live_tentative_insights = insights
+        if hasattr(self, "live_insights_context_label"):
+            self.live_insights_context_label.setText("Tentative live candidates. Confirmed after notes are processed.")
+        self._update_operational_metrics(insights)
+        self._update_insight_group(self.action_items_count, self.live_action_items_layout, insights.actions)
+        self._update_insight_group(self.decisions_count, self.live_decisions_layout, insights.decisions)
+        self._update_insight_group(self.dates_count, self.live_dates_layout, insights.dates)
+
 
     def _live_transcription_finished(self) -> None:
         self.live_transcription_worker = None
@@ -2716,13 +2854,23 @@ class MainWindow(QMainWindow):
             started_at = None
 
         if not started_at:
-            self.elapsed_label.setText("00:00:00")
+            self._set_elapsed_text("00:00:00")
             return
         elapsed = datetime.now() - started_at
         total_seconds = max(0, int(elapsed.total_seconds()))
         hours, remainder = divmod(total_seconds, 3600)
         minutes, seconds = divmod(remainder, 60)
-        self.elapsed_label.setText(f"{hours:02}:{minutes:02}:{seconds:02}")
+        self._set_elapsed_text(f"{hours:02}:{minutes:02}:{seconds:02}")
+
+    def _set_elapsed_text(self, text: str) -> None:
+        if hasattr(self, "elapsed_label"):
+            self.elapsed_label.setText(text)
+        if hasattr(self, "live_elapsed_label"):
+            self.live_elapsed_label.setText(text)
+
+    def _set_live_capture_state(self, text: str) -> None:
+        if hasattr(self, "live_state_label"):
+            self.live_state_label.setText(text)
 
     @staticmethod
     def _refresh_widget_style(widget: QWidget) -> None:
@@ -3032,14 +3180,27 @@ class MainWindow(QMainWindow):
         self.orb.set_state("recording")
         self.status_label.setObjectName("RedText")
         self.status_label.setText("Recording")
+        self._set_live_capture_state("Recording")
         self._refresh_widget_style(self.status_label)
         self.orb_caption.setText("Recording time")
         self.workflow_step_label.setText("Recording")
         self.hide_meeting_setup()
-        self.footer_save_label.setText(f"Saving to: {self.meeting_folder}")
+        self.footer_save_label.setText(f"Saving to: {self.meeting_folder.name}")
+        self.footer_save_label.setToolTip(str(self.meeting_folder))
         self.live_transcript_rows = []
+        self.live_tentative_insights = MeetingInsights()
         self._update_operational_metrics()
-        self._set_transcript_rows([("--:--:--", "Meeting Audio", "Listening for meeting audio. Live transcript will appear here when WhisperLive is available.", True)])
+        self.action_items_count.setText("0")
+        self.decisions_count.setText("0")
+        self.dates_count.setText("0")
+        self._set_insight_items(self.live_action_items_layout, ["Waiting for notes generation"])
+        self._set_insight_items(self.live_decisions_layout, ["Waiting for notes generation"])
+        self._set_insight_items(self.live_dates_layout, ["Waiting for notes generation"])
+        if hasattr(self, "live_insights_context_label"):
+            self.live_insights_context_label.setText(
+                "Live transcript is realtime. Actions, decisions, and dates fill in after notes are processed."
+            )
+        self._set_transcript_rows([("--:--:--", "Meeting Audio", "Listening for meeting audio...", True)])
         self._start_live_transcription()
         self.log(f"Meeting folder: {self.meeting_folder}")
         self.log(
@@ -3107,6 +3268,7 @@ class MainWindow(QMainWindow):
         self.recording_button.setEnabled(False)
         self.recording_button.setText("Stopping...")
         self.status_label.setText("Stopping")
+        self._set_live_capture_state("Stopping")
         self.orb_caption.setText("Finalizing capture")
         self.workflow_step_label.setText("Finalizing")
         self._stop_live_transcription()
@@ -3136,11 +3298,12 @@ class MainWindow(QMainWindow):
         self.add_note_button.setEnabled(False)
         self.orb.set_state("processing")
         self.status_label.setText("Processing")
+        self._set_live_capture_state("Processing")
         self.orb_caption.setText("Processing time")
         self.workflow_step_label.setText("Processing")
         self.processing_started_at = datetime.now()
         self.timer_phase = "processing"
-        self.elapsed_label.setText("00:00:00")
+        self._set_elapsed_text("00:00:00")
         self.elapsed_timer.start(1000)
         self._update_elapsed_timer()
 
@@ -3367,7 +3530,8 @@ class MainWindow(QMainWindow):
         if self.timer_phase != "processing":
             self.processing_started_at = datetime.now()
             self.timer_phase = "processing"
-            self.elapsed_label.setText("00:00:00")
+            self._set_elapsed_text("00:00:00")
+            self._set_live_capture_state("Processing")
             self.elapsed_timer.start(1000)
             self._update_elapsed_timer()
         self.processing_thread = QThread(self)
@@ -3398,6 +3562,7 @@ class MainWindow(QMainWindow):
         self.add_note_button.setEnabled(False)
         self.elapsed_timer.stop()
         self.timer_phase = "idle"
+        self._set_elapsed_text("00:00:00")
         if hasattr(self, "reprocess_button"):
             self.reprocess_button.setEnabled(True)
         if hasattr(self, "batch_reprocess_button"):
@@ -3413,6 +3578,7 @@ class MainWindow(QMainWindow):
         self.orb.set_state("idle")
         self.status_label.setObjectName("GreenText")
         self.status_label.setText("Ready")
+        self._set_live_capture_state("Ready")
         self.workflow_step_label.setText("Review")
         self._refresh_widget_style(self.status_label)
         if processing_seconds:
@@ -3484,12 +3650,12 @@ class MainWindow(QMainWindow):
             open_button = QPushButton("Open")
             open_button.setText("Open")
             open_button.setObjectName("TableActionButton")
-            open_button.setFixedSize(64, 28)
+            open_button.setFixedSize(58, 30)
             open_button.setToolTip("Open this meeting overview")
             open_button.clicked.connect(lambda checked=False, meeting_folder=folder: self.open_meeting_overview(meeting_folder))
             workspace_button = QPushButton("Workspace")
             workspace_button.setObjectName("TableActionButton")
-            workspace_button.setFixedSize(92, 28)
+            workspace_button.setFixedSize(84, 30)
             workspace_button.setToolTip("Open this meeting in the main workspace")
             workspace_button.clicked.connect(lambda checked=False, meeting_folder=folder: self.open_meeting_workspace(meeting_folder))
             open_item = SortableTableItem("")
@@ -3500,11 +3666,11 @@ class MainWindow(QMainWindow):
             open_cell.setObjectName("Transparent")
             open_layout = QHBoxLayout(open_cell)
             open_layout.setContentsMargins(4, 4, 4, 4)
-            open_layout.setSpacing(6)
+            open_layout.setSpacing(4)
             open_layout.addWidget(open_button)
             open_layout.addWidget(workspace_button)
             self.meeting_table.setCellWidget(row, 6, open_cell)
-            self.meeting_table.setRowHeight(row, 38)
+            self.meeting_table.setRowHeight(row, 46)
 
             if current_folder and folder == current_folder:
                 self.meeting_table.selectRow(row)
@@ -3514,7 +3680,7 @@ class MainWindow(QMainWindow):
         self.meeting_table.setColumnWidth(3, 172)
         self.meeting_table.setColumnWidth(4, 92)
         self.meeting_table.setColumnWidth(5, 92)
-        self.meeting_table.setColumnWidth(6, 178)
+        self.meeting_table.setColumnWidth(6, 170)
         if self.meeting_table.rowCount() and self._selected_meeting_folder() is None:
             self.meeting_table.selectRow(0)
         if hasattr(self, "meetings_empty_state"):
@@ -3961,12 +4127,15 @@ class MainWindow(QMainWindow):
         header.addStretch()
         open_folder_button = QPushButton("Open folder")
         open_folder_button.clicked.connect(lambda: os.startfile(folder))
-        export_button = QPushButton("Export HTML")
-        export_button.clicked.connect(lambda: self._export_notes_html_for_folder(folder))
+        export_button = QPushButton("Export briefing")
+        export_button.clicked.connect(lambda: self._export_executive_briefing_for_folder(folder))
+        notes_export_button = QPushButton("Export notes")
+        notes_export_button.clicked.connect(lambda: self._export_notes_html_for_folder(folder))
         rename_speakers_button = QPushButton("Rename speakers")
         rename_speakers_button.clicked.connect(lambda: self.rename_speakers_for_meeting(folder))
         header.addWidget(open_folder_button)
         header.addWidget(export_button)
+        header.addWidget(notes_export_button)
         header.addWidget(rename_speakers_button)
         layout.addLayout(header)
 
@@ -4112,9 +4281,12 @@ class MainWindow(QMainWindow):
         header.addStretch()
         popout_button = QPushButton("Pop out")
         popout_button.clicked.connect(lambda: self.open_meeting_overview(folder))
+        export_button = QPushButton("Export briefing")
+        export_button.clicked.connect(lambda: self._export_executive_briefing_for_folder(folder))
         rename_button = QPushButton("Rename speakers")
         rename_button.clicked.connect(lambda: self.rename_speakers_for_meeting(folder))
         header.addWidget(rename_button)
+        header.addWidget(export_button)
         header.addWidget(popout_button)
         return header_widget
 
@@ -4127,6 +4299,21 @@ class MainWindow(QMainWindow):
         notes_path = folder / "notes.md"
         transcript_path = folder / "transcript.md"
         insights = load_or_build_insights(folder)
+        summary_lines = self._note_section_lines(notes_path, "summary")
+
+        briefing_band = QFrame()
+        briefing_band.setObjectName("Panel")
+        briefing_band_layout = QGridLayout(briefing_band)
+        briefing_band_layout.setContentsMargins(16, 14, 16, 14)
+        briefing_band_layout.setHorizontalSpacing(16)
+        briefing_band_layout.setVerticalSpacing(10)
+        summary_card = self._overview_text_card("Executive summary", summary_lines[:4] or ["No summary has been generated yet."])
+        status_card = self._overview_status_card(metadata, insights)
+        briefing_band_layout.addWidget(summary_card, 0, 0)
+        briefing_band_layout.addWidget(status_card, 0, 1)
+        briefing_band_layout.setColumnStretch(0, 2)
+        briefing_band_layout.setColumnStretch(1, 1)
+        layout.addWidget(briefing_band, 0, 0, 1, 2)
 
         evidence_panel = QFrame()
         evidence_panel.setObjectName("Panel")
@@ -4144,7 +4331,7 @@ class MainWindow(QMainWindow):
         evidence_tabs.addTab(notes_view, "Structured notes")
         evidence_tabs.addTab(transcript_view, "Transcript evidence")
         evidence_layout.addWidget(evidence_tabs, stretch=1)
-        layout.addWidget(evidence_panel, 0, 0, 1, 2)
+        layout.addWidget(evidence_panel, 1, 0, 1, 2)
 
         briefing_scroll = QScrollArea()
         briefing_scroll.setWidgetResizable(True)
@@ -4186,13 +4373,32 @@ class MainWindow(QMainWindow):
         intelligence_layout.addStretch()
         intelligence_scroll.setWidget(intelligence_panel)
 
-        layout.addWidget(briefing_scroll, 1, 0)
-        layout.addWidget(intelligence_scroll, 1, 1)
+        layout.addWidget(briefing_scroll, 2, 0)
+        layout.addWidget(intelligence_scroll, 2, 1)
         layout.setColumnStretch(0, 2)
         layout.setColumnStretch(1, 1)
-        layout.setRowStretch(0, 2)
-        layout.setRowStretch(1, 3)
+        layout.setRowStretch(0, 0)
+        layout.setRowStretch(1, 2)
+        layout.setRowStretch(2, 3)
         return widget
+
+    def _overview_status_card(self, metadata: MeetingMetadata, insights: MeetingInsights) -> QFrame:
+        open_actions = sum(1 for item in insights.actions if item.status.lower() not in CLOSED_ACTION_STATUSES)
+        review_count = len(insights.quality_warnings) + len(insights.warnings)
+        dates_count = len(insights.dates)
+        decisions_count = len(insights.decisions)
+        transcript_ok = False
+        if isinstance(metadata.processing, dict):
+            transcript_raw = str(metadata.processing.get("transcript_path") or "")
+            transcript_ok = bool(transcript_raw and Path(transcript_raw).exists())
+        lines = [
+            f"Open actions: {open_actions}",
+            f"Decisions: {decisions_count}",
+            f"Dates: {dates_count}",
+            f"Review warnings: {review_count}",
+            f"Status: {self._meeting_status_label(metadata.status, review_count, transcript_ok)}",
+        ]
+        return self._overview_text_card("Follow-up status", lines)
 
     def _overview_text_card(self, title: str, lines: list[str]) -> QFrame:
         card = QFrame()
@@ -4424,6 +4630,87 @@ class MainWindow(QMainWindow):
         html_path = folder / "notes.html"
         html_path.write_text(document.toHtml(), encoding="utf-8")
         self.log(f"Exported HTML notes: {html_path}")
+
+    def _export_executive_briefing_for_folder(self, folder: Path) -> None:
+        try:
+            metadata = self.meeting_store.read_metadata(folder)
+        except Exception as error:
+            QMessageBox.warning(self, "Nova Notetaker", f"Could not read meeting metadata: {error}")
+            return
+        insights = load_or_build_insights(folder)
+        html_path = folder / "executive_briefing.html"
+        html_path.write_text(self._executive_briefing_html(folder, metadata, insights), encoding="utf-8")
+        self.log(f"Exported executive briefing: {html_path}")
+
+    def _executive_briefing_html(self, folder: Path, metadata: MeetingMetadata, insights: MeetingInsights) -> str:
+        notes_path = folder / "notes.md"
+        summary_lines = self._note_section_lines(notes_path, "summary")
+        warnings = insights.quality_warnings + insights.warnings
+        title = html.escape(metadata.title or folder.name)
+        started = html.escape(metadata.started_at or "")
+
+        def list_html(items: list[str]) -> str:
+            if not items:
+                return "<p class=\"muted\">None captured.</p>"
+            return "<ul>" + "".join(f"<li>{html.escape(str(item))}</li>" for item in items) + "</ul>"
+
+        def insight_list(items: list[InsightItem]) -> str:
+            if not items:
+                return "<p class=\"muted\">None captured.</p>"
+            rows = []
+            for item in items:
+                badges = []
+                for value in (item.owner if item.kind == "action" else "", item.due_date, item.status if item.kind == "action" else "", item.confidence):
+                    if value:
+                        badges.append(f"<span>{html.escape(value)}</span>")
+                rows.append(
+                    "<li>"
+                    f"<div>{html.escape(item.display_text)}</div>"
+                    f"<div class=\"badges\">{''.join(badges)}</div>"
+                    "</li>"
+                )
+            return "<ul>" + "".join(rows) + "</ul>"
+
+        return f"""<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Nova Meeting Briefing - {title}</title>
+  <style>
+    body {{ font-family: Segoe UI, Arial, sans-serif; color: #1f2933; margin: 42px; line-height: 1.45; }}
+    h1 {{ margin-bottom: 4px; }}
+    h2 {{ margin-top: 28px; border-bottom: 1px solid #d5d9df; padding-bottom: 6px; }}
+    .muted {{ color: #667085; }}
+    .grid {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 22px 0; }}
+    .metric {{ border: 1px solid #d5d9df; border-radius: 8px; padding: 12px; }}
+    .metric strong {{ display: block; font-size: 24px; }}
+    li {{ margin: 8px 0; }}
+    .badges span {{ display: inline-block; margin: 6px 6px 0 0; padding: 2px 7px; border-radius: 999px; background: #eef1f5; color: #425466; font-size: 12px; }}
+    @media print {{ body {{ margin: 24px; }} }}
+  </style>
+</head>
+<body>
+  <h1>{title}</h1>
+  <div class="muted">{started} | Status: {html.escape(metadata.status)}</div>
+  <div class="grid">
+    <div class="metric"><strong>{sum(1 for item in insights.actions if item.status.lower() not in CLOSED_ACTION_STATUSES)}</strong>Open actions</div>
+    <div class="metric"><strong>{len(insights.decisions)}</strong>Decisions</div>
+    <div class="metric"><strong>{len(insights.dates)}</strong>Dates</div>
+    <div class="metric"><strong>{len(warnings)}</strong>Review warnings</div>
+  </div>
+  <h2>Executive Summary</h2>
+  {list_html(summary_lines)}
+  <h2>Key Decisions</h2>
+  {insight_list(insights.decisions)}
+  <h2>Action Items</h2>
+  {insight_list(insights.actions)}
+  <h2>Dates / Follow-ups</h2>
+  {insight_list(insights.dates)}
+  <h2>Review Needed</h2>
+  {list_html([str(item.text if isinstance(item, InsightItem) else item) for item in warnings])}
+</body>
+</html>
+"""
 
     def update_meeting_health(self) -> None:
         if not hasattr(self, "meeting_health"):
@@ -4691,6 +4978,13 @@ class MainWindow(QMainWindow):
             return
         self._export_notes_html_for_folder(folder)
 
+    def export_selected_executive_briefing(self) -> None:
+        folder = self._selected_meeting_folder()
+        if folder is None:
+            QMessageBox.information(self, "Nova Notetaker", "Select a meeting to export.")
+            return
+        self._export_executive_briefing_for_folder(folder)
+
     def export_selected_calendar_ics(self) -> None:
         folder = self._selected_meeting_folder()
         if folder is None:
@@ -4925,8 +5219,12 @@ class MainWindow(QMainWindow):
         value = int(max(0.0, min(level, 1.0)) * 100)
         if source == "mic":
             self.mic_level.setValue(value)
+            if hasattr(self, "live_mic_level"):
+                self.live_mic_level.setValue(value)
         elif source == "system":
             self.system_level.setValue(value)
+            if hasattr(self, "live_system_level"):
+                self.live_system_level.setValue(value)
 
     @Slot(str)
     def log(self, message: str) -> None:

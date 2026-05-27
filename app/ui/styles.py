@@ -93,6 +93,12 @@ QFrame#MetricCard {{
     border-radius: 7px;
 }}
 
+QFrame#LiveCaptureHud {{
+    background-color: {t["soft"]};
+    border: 1px solid {t["border"]};
+    border-radius: 7px;
+}}
+
 QFrame#TranscriptRow {{
     background-color: transparent;
     border: 0;
@@ -100,7 +106,19 @@ QFrame#TranscriptRow {{
     border-radius: 0;
 }}
 
+QFrame#LiveTranscriptRow {{
+    background-color: rgba(255, 138, 31, 0.045);
+    border: 1px solid rgba(255, 138, 31, 0.12);
+    border-radius: 7px;
+}}
+
 QFrame#InsightItem {{
+    background-color: {t["soft"]};
+    border: 1px solid {t["border"]};
+    border-radius: 6px;
+}}
+
+QFrame#InsightPreview {{
     background-color: {t["soft"]};
     border: 1px solid {t["border"]};
     border-radius: 6px;
@@ -161,6 +179,12 @@ QLabel#SectionTitle {{
     text-transform: uppercase;
 }}
 
+QLabel#FieldLabel {{
+    color: {t["muted"]};
+    font-size: 12px;
+    font-weight: 600;
+}}
+
 QLabel#StatValue {{
     color: {t["text"]};
     font-size: 20px;
@@ -171,6 +195,12 @@ QLabel#HeroTimer {{
     color: {t["text"]};
     font-size: 28px;
     font-weight: 700;
+}}
+
+QLabel#CompactTimer {{
+    color: {t["text"]};
+    font-size: 16px;
+    font-weight: 800;
 }}
 
 QLabel#WorkflowStep {{
@@ -219,6 +249,18 @@ QLabel#InsightItemTitle {{
     font-size: 12px;
 }}
 
+QLabel#InsightPreviewText {{
+    background-color: transparent;
+    color: {t["secondary"]};
+    font-size: 12px;
+}}
+
+QLabel#LivePartialText {{
+    background-color: transparent;
+    color: {t["text"]};
+    font-size: 13px;
+}}
+
 QLabel#Badge[kind="confidence-high"] {{
     background-color: rgba(61, 220, 132, 0.14);
     color: {t["success"]};
@@ -232,6 +274,11 @@ QLabel#Badge[kind="confidence-medium"] {{
 QLabel#Badge[kind="confidence-low"] {{
     background-color: rgba(251, 113, 133, 0.15);
     color: #FB5470;
+}}
+
+QLabel#Badge[kind="confidence-tentative"] {{
+    background-color: rgba(105, 167, 255, 0.12);
+    color: {t["blue"]};
 }}
 
 QLabel#Badge[kind="date"] {{
@@ -365,33 +412,35 @@ QPushButton#SubtleActionButton {{
 }}
 
 QFrame#ThemeToggle {{
-    background-color: {t["orange"]};
-    border: 1px solid {t["orange_hover"]};
-    border-radius: 22px;
+    background-color: {t["raised"]};
+    border: 1px solid {t["border"]};
+    border-radius: 8px;
 }}
 
 QPushButton#ThemeButton {{
     background-color: transparent;
-    color: {t["primary_text"]};
+    color: {t["secondary"]};
     border: 0;
-    border-radius: 18px;
-    padding: 9px 20px;
+    border-radius: 6px;
+    padding: 4px 10px;
     font-weight: 700;
-    min-width: 72px;
+    min-width: 0;
 }}
 
 QPushButton#ThemeButton[active="true"] {{
-    background-color: {t["field"]};
+    background-color: rgba(255, 138, 31, 0.14);
     color: {t["orange"]};
-    border: 0;
+    border: 1px solid rgba(255, 138, 31, 0.34);
 }}
 
 QPushButton#ThemeButton:hover {{
-    background-color: rgba(255, 255, 255, 0.16);
+    background-color: {t["hover"]};
+    color: {t["text"]};
 }}
 
 QPushButton#ThemeButton[active="true"]:hover {{
-    background-color: {t["field"]};
+    background-color: rgba(255, 138, 31, 0.18);
+    color: {t["orange"]};
 }}
 
 QPushButton#SidebarButton {{
@@ -615,6 +664,22 @@ QScrollBar::handle:vertical {{
 
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
     height: 0;
+}}
+
+QScrollBar:horizontal {{
+    background: transparent;
+    height: 10px;
+    margin: 2px 4px 2px 4px;
+}}
+
+QScrollBar::handle:horizontal {{
+    background: {t["border"]};
+    border-radius: 4px;
+    min-width: 36px;
+}}
+
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+    width: 0;
 }}
 
 QScrollArea {{
