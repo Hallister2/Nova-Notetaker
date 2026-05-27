@@ -5,6 +5,7 @@ import json
 import queue
 import re
 import shutil
+import stat
 import sys
 import uuid
 from datetime import datetime
@@ -501,7 +502,18 @@ class ProcessingWorker(QObject):
         try:
             MeetingProcessor().process(self.folder, self.metadata, self.status.emit, mode=self.mode)
         except Exception as error:
-            self.status.emit(f"Post-processing failed: {error}")
+            message = f"Post-processing failed: {error}"
+            self.status.emit(message)
+            self.metadata.status = "processing_failed"
+            self.metadata.processing = {
+                **(self.metadata.processing if isinstance(self.metadata.processing, dict) else {}),
+                "warnings": [*((self.metadata.processing or {}).get("warnings", []) if isinstance(self.metadata.processing, dict) else []), message],
+                "mode": self.mode,
+            }
+            try:
+                MeetingStore().write_metadata(self.folder, self.metadata)
+            except Exception:
+                pass
         finally:
             self.finished.emit()
 
@@ -549,6 +561,7 @@ class MainWindow(QMainWindow):
         self.live_transcription_thread: QThread | None = None
         self.live_transcription_worker: LiveTranscriptionWorker | None = None
         self.live_transcript_rows: list[tuple[str, str, str, bool]] = []
+        self.pending_processing_job: tuple[Path, MeetingMetadata, str] | None = None
         self.processing_thread: QThread | None = None
         self.processing_worker: ProcessingWorker | None = None
         self.batch_processing_thread: QThread | None = None
@@ -697,7 +710,8 @@ class MainWindow(QMainWindow):
         center_layout = QVBoxLayout(center)
         center_layout.setContentsMargins(0, 0, 0, 0)
         center_layout.setSpacing(14)
-        center_layout.addWidget(self._build_meeting_status_card())
+        self.meeting_setup_card = self._build_meeting_status_card()
+        center_layout.addWidget(self.meeting_setup_card)
         center_layout.addWidget(self._build_transcript_card(), stretch=1)
         center_layout.addWidget(self._build_action_bar())
         main_grid.addWidget(center, 0, 0)
@@ -919,6 +933,8 @@ class MainWindow(QMainWindow):
         self.mark_important_button = QPushButton("Mark Important")
         self.mark_important_button.setEnabled(False)
         self.mark_important_button.clicked.connect(self.mark_current_meeting_important)
+        self.new_meeting_button = QPushButton("New Meeting")
+        self.new_meeting_button.clicked.connect(self.show_meeting_setup)
         self.open_latest_button = QPushButton("Open latest meeting")
         self.open_latest_button.setEnabled(False)
         self.open_latest_button.clicked.connect(self.open_latest_meeting)
@@ -931,6 +947,7 @@ class MainWindow(QMainWindow):
         self.add_note_button.setEnabled(False)
         self.add_note_button.clicked.connect(self.add_current_meeting_note)
         layout.addWidget(self.mark_important_button)
+        layout.addWidget(self.new_meeting_button)
         layout.addWidget(self.open_latest_button)
         layout.addWidget(self.recording_button, stretch=1)
         layout.addWidget(self.add_note_button)
@@ -2654,7 +2671,7 @@ class MainWindow(QMainWindow):
         self.live_transcription_thread.finished.connect(self._live_transcription_finished)
         self.live_transcription_thread.finished.connect(self.live_transcription_thread.deleteLater)
         if self.worker is not None:
-            self.worker.audio_chunk.connect(self.live_transcription_worker.enqueue_audio)
+            self.worker.audio_chunk.connect(self.live_transcription_worker.enqueue_audio, Qt.DirectConnection)
         self.live_transcription_thread.start()
 
     def _stop_live_transcription(self) -> None:
@@ -2678,6 +2695,11 @@ class MainWindow(QMainWindow):
         self.live_transcription_thread = None
         if hasattr(self, "live_transcript_status_label") and self.timer_phase != "recording":
             self.live_transcript_status_label.setText("Final transcript will be refreshed after processing.")
+        if self.pending_processing_job:
+            folder, metadata, mode = self.pending_processing_job
+            self.pending_processing_job = None
+            self.log("Live transcript stream closed. Starting post-processing.")
+            self._start_processing(folder, metadata, mode=mode)
 
     def _recording_offset_label(self) -> str:
         if not self.recording_started_at:
@@ -2995,6 +3017,7 @@ class MainWindow(QMainWindow):
         self.recording_button.setObjectName("DangerButton")
         self._refresh_widget_style(self.recording_button)
         self.settings_button.setEnabled(False)
+        self.new_meeting_button.setEnabled(False)
         self.capture_mic_toggle.setEnabled(False)
         self.mark_important_button.setEnabled(True)
         self.add_note_button.setEnabled(True)
@@ -3012,6 +3035,7 @@ class MainWindow(QMainWindow):
         self._refresh_widget_style(self.status_label)
         self.orb_caption.setText("Recording time")
         self.workflow_step_label.setText("Recording")
+        self.hide_meeting_setup()
         self.footer_save_label.setText(f"Saving to: {self.meeting_folder}")
         self.live_transcript_rows = []
         self._update_operational_metrics()
@@ -3107,6 +3131,7 @@ class MainWindow(QMainWindow):
             self.log(f"Recording duration: {hours:02}:{minutes:02}:{seconds:02}")
         self.recording_button.setEnabled(False)
         self.recording_button.setText("Processing...")
+        self.new_meeting_button.setEnabled(False)
         self.mark_important_button.setEnabled(False)
         self.add_note_button.setEnabled(False)
         self.orb.set_state("processing")
@@ -3120,7 +3145,13 @@ class MainWindow(QMainWindow):
         self._update_elapsed_timer()
 
         if self.metadata and self.meeting_folder:
-            self._start_processing(self.meeting_folder, self.metadata, mode="full")
+            if self.live_transcription_thread is not None:
+                self.pending_processing_job = (self.meeting_folder, self.metadata, "full")
+                self.log("Waiting for live transcript stream to close before post-processing.")
+                if hasattr(self, "live_transcript_status_label"):
+                    self.live_transcript_status_label.setText("Closing live transcript before final processing.")
+            else:
+                self._start_processing(self.meeting_folder, self.metadata, mode="full")
         else:
             self._processing_finished()
 
@@ -3361,6 +3392,7 @@ class MainWindow(QMainWindow):
         self.recording_button.setObjectName("PrimaryButton")
         self._refresh_widget_style(self.recording_button)
         self.settings_button.setEnabled(True)
+        self.new_meeting_button.setEnabled(True)
         self.capture_mic_toggle.setEnabled(True)
         self.mark_important_button.setEnabled(False)
         self.add_note_button.setEnabled(False)
@@ -3904,6 +3936,7 @@ class MainWindow(QMainWindow):
         dialog.setWindowTitle(f"Nova Meeting Overview - {metadata.title or folder.name}")
         dialog.setStyleSheet(build_stylesheet(self.current_theme))
         dialog.setMinimumSize(720, 520)
+        dialog.setProperty("meeting_folder", str(folder.resolve()))
         self.meeting_overview_windows.append(dialog)
         dialog.destroyed.connect(lambda *_: self._forget_overview_window(dialog))
 
@@ -4049,6 +4082,21 @@ class MainWindow(QMainWindow):
         self.overview_workspace_layout.addWidget(self._build_meeting_overview_widget(folder, metadata), stretch=1)
         self._set_active_nav(2)
 
+    def show_meeting_setup(self) -> None:
+        if hasattr(self, "meeting_setup_card"):
+            self.meeting_setup_card.setVisible(True)
+        if hasattr(self, "meeting_title"):
+            self.meeting_title.setFocus()
+            self.meeting_title.selectAll()
+        if hasattr(self, "workflow_step_label"):
+            self.workflow_step_label.setText("Setup")
+        if hasattr(self, "live_transcript_status_label") and self.worker is None:
+            self.live_transcript_status_label.setText("Ready for a new meeting.")
+
+    def hide_meeting_setup(self) -> None:
+        if hasattr(self, "meeting_setup_card"):
+            self.meeting_setup_card.setVisible(False)
+
     def _build_overview_workspace_header(self, folder: Path, metadata: MeetingMetadata) -> QWidget:
         header_widget = QWidget()
         header_widget.setObjectName("Transparent")
@@ -4080,6 +4128,24 @@ class MainWindow(QMainWindow):
         transcript_path = folder / "transcript.md"
         insights = load_or_build_insights(folder)
 
+        evidence_panel = QFrame()
+        evidence_panel.setObjectName("Panel")
+        evidence_layout = QVBoxLayout(evidence_panel)
+        evidence_layout.setContentsMargins(16, 14, 16, 14)
+        evidence_layout.setSpacing(10)
+        evidence_layout.addWidget(self._section_label("Meeting record"))
+        evidence_tabs = QTabWidget()
+        notes_view = QTextEdit()
+        notes_view.setReadOnly(True)
+        notes_view.setMarkdown(self._notes_for_display(notes_path) if notes_path.exists() else "notes.md has not been created yet.")
+        transcript_view = QTextEdit()
+        transcript_view.setReadOnly(True)
+        transcript_view.setMarkdown(self._transcript_for_display(transcript_path, folder) if transcript_path.exists() else "transcript.md has not been created yet.")
+        evidence_tabs.addTab(notes_view, "Structured notes")
+        evidence_tabs.addTab(transcript_view, "Transcript evidence")
+        evidence_layout.addWidget(evidence_tabs, stretch=1)
+        layout.addWidget(evidence_panel, 0, 0, 1, 2)
+
         briefing_scroll = QScrollArea()
         briefing_scroll.setWidgetResizable(True)
         briefing_scroll.setFrameShape(QFrame.NoFrame)
@@ -4090,24 +4156,11 @@ class MainWindow(QMainWindow):
         briefing_layout.setContentsMargins(0, 0, 0, 0)
         briefing_layout.setSpacing(12)
 
-        summary_lines = self._note_section_lines(notes_path, "summary")
-        briefing_layout.addWidget(self._overview_text_card("Executive summary", summary_lines or ["Summary has not been generated yet."]))
         briefing_layout.addWidget(self._overview_items_card("Key decisions", insights.decisions, "No decisions detected."))
         briefing_layout.addWidget(self._overview_items_card("Action items", insights.actions, "No action items detected."))
         briefing_layout.addWidget(self._overview_items_card("Dates / follow-ups", insights.dates, "No dates detected."))
         warning_items = insights.quality_warnings + insights.warnings
         briefing_layout.addWidget(self._overview_text_card("Risks / review needed", warning_items or ["No review warnings."]))
-
-        evidence_tabs = QTabWidget()
-        notes_view = QTextEdit()
-        notes_view.setReadOnly(True)
-        notes_view.setMarkdown(self._notes_for_display(notes_path) if notes_path.exists() else "notes.md has not been created yet.")
-        transcript_view = QTextEdit()
-        transcript_view.setReadOnly(True)
-        transcript_view.setMarkdown(self._transcript_for_display(transcript_path, folder) if transcript_path.exists() else "transcript.md has not been created yet.")
-        evidence_tabs.addTab(notes_view, "Structured notes")
-        evidence_tabs.addTab(transcript_view, "Transcript evidence")
-        briefing_layout.addWidget(evidence_tabs, stretch=1)
         briefing_scroll.setWidget(briefing)
 
         intelligence_scroll = QScrollArea()
@@ -4124,7 +4177,6 @@ class MainWindow(QMainWindow):
         intelligence_layout.addWidget(self._section_label("Review controls"))
         intelligence_layout.addWidget(self._overview_quality_card(metadata, insights))
         intelligence_layout.addWidget(self._overview_markers_card(folder))
-        intelligence_layout.addWidget(self._overview_action_items_card(folder, insights))
         details = QTextEdit()
         details.setReadOnly(True)
         details.setMaximumHeight(150)
@@ -4134,10 +4186,12 @@ class MainWindow(QMainWindow):
         intelligence_layout.addStretch()
         intelligence_scroll.setWidget(intelligence_panel)
 
-        layout.addWidget(briefing_scroll, 0, 0)
-        layout.addWidget(intelligence_scroll, 0, 1)
+        layout.addWidget(briefing_scroll, 1, 0)
+        layout.addWidget(intelligence_scroll, 1, 1)
         layout.setColumnStretch(0, 2)
         layout.setColumnStretch(1, 1)
+        layout.setRowStretch(0, 2)
+        layout.setRowStretch(1, 3)
         return widget
 
     def _overview_text_card(self, title: str, lines: list[str]) -> QFrame:
@@ -4555,7 +4609,11 @@ class MainWindow(QMainWindow):
                 if meetings_root not in resolved.parents:
                     skipped.append(folder.name)
                     continue
-                shutil.rmtree(resolved)
+                if self._meeting_folder_is_active(resolved):
+                    skipped.append(f"{folder.name}: meeting is currently recording or processing")
+                    continue
+                self._close_views_for_meeting_folder(resolved)
+                self._remove_meeting_folder(resolved)
                 deleted += 1
             except Exception as error:
                 skipped.append(f"{folder.name}: {error}")
@@ -4565,6 +4623,62 @@ class MainWindow(QMainWindow):
             self.log(f"Skipped {len(skipped)} meeting(s): {'; '.join(skipped)}")
             QMessageBox.warning(self, "Nova Notetaker", f"Deleted {deleted}, skipped {len(skipped)}. See Logs for details.")
         self.refresh_meetings()
+
+    def _meeting_folder_is_active(self, folder: Path) -> bool:
+        if not self.meeting_folder:
+            return False
+        try:
+            active_folder = self.meeting_folder.resolve()
+        except Exception:
+            return False
+        if active_folder != folder:
+            return False
+        return bool(self.worker or self.processing_thread or self.live_transcription_thread or self.pending_processing_job)
+
+    def _close_views_for_meeting_folder(self, folder: Path) -> None:
+        folder_raw = str(folder)
+        for dialog in list(self.meeting_overview_windows):
+            if dialog.property("meeting_folder") == folder_raw:
+                dialog.close()
+        if self.overview_workspace_folder:
+            try:
+                if self.overview_workspace_folder.resolve() == folder:
+                    self.overview_workspace_folder = None
+                    while self.overview_workspace_layout.count() > 0:
+                        item = self.overview_workspace_layout.takeAt(0)
+                        widget = item.widget()
+                        if widget is not None:
+                            widget.deleteLater()
+                    self.overview_workspace_layout.addWidget(
+                        self._empty_state_widget("meetings", "No meeting selected", "Open a meeting from Meetings, Search, Calendar, or Actions."),
+                        stretch=1,
+                    )
+            except Exception:
+                pass
+
+    def _remove_meeting_folder(self, folder: Path) -> None:
+        def make_writable(path: str) -> None:
+            try:
+                os.chmod(path, stat.S_IWRITE | stat.S_IREAD | stat.S_IEXEC)
+            except Exception:
+                pass
+
+        def retry_with_writable(function, path: str, exc) -> None:
+            make_writable(path)
+            function(path)
+
+        for root, dirs, files in os.walk(folder):
+            for name in [*files, *dirs]:
+                make_writable(str(Path(root) / name))
+        make_writable(str(folder))
+
+        try:
+            shutil.rmtree(folder, onexc=retry_with_writable)
+        except TypeError:
+            shutil.rmtree(folder, onerror=lambda function, path, exc_info: retry_with_writable(function, path, exc_info[1]))
+        if folder.exists():
+            make_writable(str(folder))
+            os.rmdir(folder)
 
     def export_selected_notes_html(self) -> None:
         folder = self._selected_meeting_folder()

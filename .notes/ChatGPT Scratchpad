@@ -60,9 +60,14 @@ That transition is mostly a UX/design challenge now.
 These items appear implemented or far enough along that they should no longer be treated as active design action items:
 
 - Live Capture workflow redesign into clearer setup/state/transcript/action zones.
+- Live Capture setup now collapses during recording so the live transcript becomes the main surface; New Meeting restores setup.
 - Operational insight-card metrics for open actions, missing owners, due-soon items, and review warnings.
-- Meeting Workspace executive-briefing hierarchy.
+- Meeting Workspace now prioritizes Structured Notes and Transcript Evidence first, then extracted decisions/actions/dates below.
 - Initial near-realtime WhisperLive rolling transcript path for system audio.
+- Live transcript/post-processing handoff now waits for the live stream to close before final processing starts.
+- Processing failures now persist as `processing_failed` instead of silently leaving meetings stuck in `processing`.
+- Insights parser now handles star bullets, HTML fragments, trailing confidence values, and better decision/action separation.
+- Meeting deletion is hardened for Windows/OneDrive access-denied cases by closing views, skipping active folders, clearing read-only attributes, and retrying removal.
 - Human-readable Meetings status badges.
 - Calendar approval/edit workflow before `.ics` export.
 - Cross-meeting Actions tab inside the Calendar workspace.
@@ -427,16 +432,19 @@ Current direction:
 - Continue polishing the workspace as the premium review experience.
 - Make it feel like an AI-generated executive briefing, not a transcript viewer.
 
-Recommended information hierarchy:
+Current information hierarchy:
 
-1. Executive Summary.
-2. Key Decisions.
-3. Action Items.
-4. Dates / Follow-ups.
-5. Risks / Review Needed.
-6. Structured Notes.
-7. Transcript Evidence.
-8. Details / Metadata.
+1. Structured Notes.
+2. Transcript Evidence.
+3. Key Decisions.
+4. Action Items.
+5. Dates / Follow-ups.
+6. Risks / Review Needed.
+7. Details / Metadata.
+
+Design note:
+
+- This latest structure reflects Chad's preference to put the actual meeting record first and supporting extracted intelligence below it.
 
 Potential future improvements:
 
@@ -447,7 +455,7 @@ Potential future improvements:
 
 ## Realtime Transcription Direction
 
-Realtime or near-realtime transcription remains a realistic next major functional milestone.
+Realtime or near-realtime transcription now has an initial implementation and should move from build work into reliability/UX validation.
 
 Current infrastructure strengths:
 
@@ -471,6 +479,12 @@ Phase 1:
 - Partial transcript updates.
 - Finalized transcript segments after confirmation.
 
+Current state:
+
+- Live rolling transcript for system audio exists.
+- Stress Test 2 behaved much better than the first stress test.
+- The next step is regression testing the whole lifecycle: record, live transcript, stop, final processing, files written, and no stuck `processing` state.
+
 Phase 2:
 
 - Faster post-meeting summarization.
@@ -484,7 +498,7 @@ Phase 3:
 
 Current recommendation:
 
-- Keep realtime transcript as the first milestone.
+- Treat realtime transcript as a beta-quality workflow that needs one more real-server reliability pass.
 - Keep insight generation primarily post-processing for reliability.
 - Avoid noisy realtime insight spam.
 
@@ -657,13 +671,13 @@ The orb works best as quiet system presence, not an assistant avatar.
 
 Highest current design priorities:
 
-1. Refine Live Capture into a clearer meeting workflow.
+1. Validate the refined Live Capture workflow with real recordings.
 2. Redesign insight cards to feel more operational and intelligent.
 3. Continue polishing the Meeting Workspace as the premium review surface.
 4. Tighten typography and spacing using the UI Design System.
 5. Keep reducing visible infrastructure complexity.
 6. Screenshot-test updated Calendar, Actions, Search, and Meeting Workspace at real Windows scaling.
-7. Prepare realtime transcript UX patterns before implementation.
+7. Polish realtime transcript UX now that the initial path exists.
 
 Secondary / later priorities:
 
@@ -673,26 +687,37 @@ Secondary / later priorities:
 
 ## Next Tackle List
 
-Recommended next implementation order after the latest dark-theme, table, and Calendar refinements:
+Recommended next implementation order after the latest live transcript, workspace, and deletion refinements:
 
-1. Real-server QA for the near-realtime transcript path.
-   - Confirm WhisperLive accepts the live system-audio stream.
-   - Tune queue sizing, latency, partial/final segment behavior, and fallback messaging.
+1. Real-server recording regression.
+   - Confirm live transcript appears during recording.
+   - Stop recording and confirm final `transcript.md`, `notes.md`, `insights.json`, and `metadata.json` are written.
+   - Confirm the meeting does not remain in `processing`.
    - Keep post-processing transcript as the source of truth until this is proven reliable.
 
-2. Main-window decomposition.
+2. Prompt and extraction cleanup.
+   - Prevent generated notes from assigning action items to Nova unless Nova truly owns the work.
+   - Enforce confidence as its own field instead of appending values like `(High)` to dates or due text.
+   - Reduce invented owners and due dates.
+
+3. Processing failure UX.
+   - Show `processing_failed` clearly in Meetings and Meeting Workspace.
+   - Add a retry/repair action for failed or partial meetings.
+   - Make missing `notes.md` / `transcript.md` states understandable to the user.
+
+4. Main-window decomposition.
    - Split `main_window.py` into page/component modules before the next major UI expansion.
    - Suggested first extracts: Live Capture page, Calendar workspace, Meeting Workspace, Templates page, Settings page.
 
-3. Old meeting insight/index backfill.
-   - Add a utility action or command to rebuild `insights.json` and `meetings/index.json` for older meeting folders.
+5. Old meeting insight/index backfill.
+   - Add a utility action or command to rebuild `insights.json` and `meetings/index.json` for older or stuck meeting folders.
    - This will make Search, Calendar, Actions, and Meeting Workspace more reliable across historical data.
 
-4. Theme follow-up pass.
+6. Theme follow-up pass.
    - After Dark stabilizes, continue polishing Graphite Light for daytime/business use.
    - Colorful mode has been removed so the theme system stays focused.
 
-5. Export/print polish.
+7. Export/print polish.
    - Add a cleaner executive-summary export path for meetings.
    - Keep this behind Workspace polish so the exported artifact reflects the right hierarchy.
 
@@ -769,7 +794,7 @@ Screenshot-based review should remain part of the standard iteration process.
 Potential future opportunities that still appear relevant:
 
 - True passive speaker diarization.
-- Realtime transcript streaming.
+- Realtime transcript UX polish and reliability hardening.
 - Meeting quality scoring.
 - Follow-up reminders.
 - Outlook integration.

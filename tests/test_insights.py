@@ -54,6 +54,54 @@ class InsightsTests(TestCase):
             self.assertEqual(loaded.actions[0].owner, "Chad")
             self.assertEqual(loaded.actions[0].status, "open")
 
+    def test_parses_asterisk_bullets_and_html_badges(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            notes_path = Path(temp_dir) / "notes.md"
+            notes_path.write_text(
+                "\n".join(
+                    [
+                        "## Action Items",
+                        '* Owner: Maya; Task: Review switch logs; Due: <span style="color:red">Thursday afternoon</span>; Confidence: <span>High</span>',
+                        "## Key Decisions",
+                        "* Backup schedule should not change until a formal change request is created.",
+                        "## Important Dates",
+                        '* Date: <span>Friday, May 29</span>; Context: IT Team submits change request; Confidence: <span>High</span>',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            insights = build_insights_from_notes(notes_path)
+
+            self.assertEqual(len(insights.actions), 1)
+            self.assertEqual(insights.actions[0].owner, "Maya")
+            self.assertEqual(insights.actions[0].due_date, "Thursday afternoon")
+            self.assertEqual(insights.actions[0].confidence, "High")
+            self.assertEqual(len(insights.decisions), 1)
+            self.assertEqual(insights.dates[0].due_date, "Friday, May 29")
+
+    def test_extracts_confidence_from_parenthetical_due_and_context(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            notes_path = Path(temp_dir) / "notes.md"
+            notes_path.write_text(
+                "\n".join(
+                    [
+                        "## Action Items",
+                        "* Owner: IT Team; Task: Create change request; Due: Friday (High)",
+                        "## Important Dates",
+                        "* Date: Monday, June 1st; Context: next full operations review (Medium)",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            insights = build_insights_from_notes(notes_path)
+
+            self.assertEqual(insights.actions[0].due_date, "Friday")
+            self.assertEqual(insights.actions[0].confidence, "High")
+            self.assertEqual(insights.dates[0].context, "next full operations review")
+            self.assertEqual(insights.dates[0].confidence, "Medium")
+
     def test_rebuilds_when_notes_are_newer_than_insights_json(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             folder = Path(temp_dir)

@@ -113,8 +113,9 @@ Current UI structure:
 
 - Live Capture page:
   - Header with theme toggle.
-  - Meeting profile selector.
-  - Note template selector.
+  - Meeting setup is a collapsible prep section with title/profile/template controls.
+  - New Meeting brings the setup section back.
+  - Start Recording hides setup so Live Transcript gets the main vertical space.
   - Workflow-oriented meeting setup and current-state card.
   - Audio levels.
   - Mic state pill.
@@ -174,15 +175,15 @@ Current UI structure:
 - Meeting overview workspace:
   - In-app workspace page exists in the main stack.
   - Meetings can open into the workspace from Meetings, Search, Calendar/Actions, or Open latest.
-  - Workspace is now organized as an executive briefing:
-    - Executive summary
+  - Workspace is now organized with the source meeting record first:
+    - Structured notes
+    - Transcript evidence
     - Key decisions
     - Action items
     - Dates / follow-ups
     - Risks / review needed
-    - Structured notes
-    - Transcript evidence
     - Review controls/details rail
+  - Action items are not duplicated in the right rail; the rail is for quality, markers, and details.
   - Speaker aliases can be edited through Rename Speakers and are applied to transcript display without rewriting `transcript.md`.
 
 ## Theme System
@@ -273,7 +274,7 @@ Potential future insight improvements:
 
 ## Open Product / Design Questions
 
-- Should the app show live partial transcript while recording, or only after processing?
+- How much should Nova distinguish live partial transcript from finalized transcript visually?
 - Should insights appear only after processing, or should we show â€œcapture/transcription stateâ€ cards while recording?
 - What is the right visual weight for the Nova orb?
   - Current orb is brand/status flavor.
@@ -293,32 +294,47 @@ Potential future insight improvements:
 
 ## Next Useful Implementation Ideas
 
-- Add an `insights.json` backfill command for old meetings.
+- Add a repair/backfill command for old or stuck meeting folders:
+  - rebuild `insights.json`
+  - rebuild `meetings/index.json`
+  - retry meetings left in `processing`
+  - surface missing `notes.md` / `transcript.md`
+- Add visible retry/repair UX for `processing_failed` meetings.
 - Remove unused legacy UI code from `main_window.py`.
+- Continue splitting `main_window.py` into page/component modules.
 - Add screenshot-based UI QA notes for Dark and Graphite Light.
 - Add Outlook/n8n/Planner integration for approved calendar/action items.
 - Add import/export for meeting profiles and note templates.
-- Continue splitting `main_window.py` into page/component modules.
 
 ## Last Verified State
 
 - Last code verification: 2026-05-26.
-- Full test discovery passed after the layout constraint pass:
-  - 32 tests OK.
+- Full test discovery passed after the live transcript / insights parser / deletion hardening pass:
+  - 34 tests OK.
 - Latest UI smoke check:
   - Offscreen geometry check at 780x560, 1024x680, and 1366x768 found 0 visible child-boundary violations.
 - Most recent feature batch:
-  - Calendar approval/edit workflow.
-  - In-app meeting overview workspace.
-  - Passive speaker rename aliases.
-  - Actions folded under Calendar.
-  - Layout constraint pass for Meetings, Calendar, Actions, Search, and Settings.
+  - Live system-audio transcript streaming into WhisperLive during recording.
+  - Live Capture setup collapses during recording and returns with New Meeting.
+  - Meeting Workspace prioritizes Structured notes and Transcript evidence first.
+  - Insights parser handles `*` bullets, HTML badge fragments, parenthetical confidence, and better decision/action separation.
+  - Processing failures persist `processing_failed` metadata instead of silently leaving meetings stuck.
+  - Meeting deletion now closes matching views, skips active folders, clears read-only bits, and retries Windows/OneDrive folder removal.
 
 ## Current Next Recommendations
 
-- Screenshot-review the updated Calendar/Actions workspace and in-app Meeting Overview at real Windows scaling.
-- Continue tightening the Ollama prompt if assignments still leak into Key Decisions in generated notes.
-- Test near-realtime WhisperLive transcript streaming against the real server and tune latency/chunk behavior.
+- Run one more real-server recording regression:
+  - record with live transcript visible
+  - stop
+  - confirm final `transcript.md`, `notes.md`, `insights.json`, and `metadata.json` are written
+  - confirm the meeting does not remain in `processing`
+- Tighten the Ollama notes/insights prompt:
+  - avoid assigning actions to Nova unless Nova truly owns the work
+  - keep confidence as its own field instead of appending `(High)` to dates/due text
+  - reduce invented owners and due dates
+- Add visible processing-failure and retry UX in the Meetings table/workspace.
+- Add a repair/backfill utility for older meetings and any folders stuck in partial states.
+- Screenshot-review Live Capture's setup collapse and the revised Meeting Workspace hierarchy at real Windows scaling.
 - Continue decomposing `main_window.py`; `app/ui/review_helpers.py` is only the first extraction.
 
 ## 2026-05-26 Update - Latest Reprocess Review
@@ -544,7 +560,7 @@ When giving product feedback, focus on:
 
 Remaining roadmap items:
 
-- True near-realtime WhisperLive transcript streaming is still pending.
+- Near-realtime WhisperLive transcript streaming now has an initial implementation; it still needs real-server regression testing and UX polish.
 - `main_window.py` still needs more page/component extraction before the next large UI expansion.
 
 ## 2026-05-26 Update - Session Finish Pass
@@ -591,4 +607,50 @@ Remaining roadmap items:
   - Offscreen geometry smoke check at 780x560, 1024x680, and 1366x768 found 0 visible child-boundary violations.
   - `py_compile` passed for changed UI files.
   - Full test discovery passed: 32 tests OK.
+
+## 2026-05-26 Update - End-of-Night Stabilization
+
+- Live transcript:
+  - Added a live WhisperLive worker for system audio while recording.
+  - Fixed the audio enqueue signal wiring so the worker receives audio while its thread is active.
+  - Final post-processing now waits for the live transcript stream to close before starting.
+  - Stress Test 2 showed the live transcript behaving much better than the earlier delayed-only transcript behavior.
+
+- Stress Test 2 recovery:
+  - Reviewed `meetings/2026-05-26_203226_stress-test-2`.
+  - The raw system audio was valid, but the folder had been left with metadata/insights only and no `transcript.md` or `notes.md`.
+  - Manually reprocessed the meeting successfully.
+  - `transcript.md`, `notes.md`, `insights.json`, and updated `metadata.json` now exist for that folder.
+
+- Processing reliability:
+  - Processing failures now write `metadata.status = "processing_failed"` with a warning instead of leaving the meeting silently stuck in `processing`.
+  - Next UX step is to show this status clearly and provide a retry/repair action.
+
+- Insights parser:
+  - Now handles `*` bullets as well as `-` bullets.
+  - Handles HTML badge fragments that can appear in generated notes.
+  - Extracts confidence from trailing parenthetical values such as `Friday (High)`.
+  - Tightened decision/action separation so lowercase phrases such as "appears to have" are not misclassified as assignments.
+
+- Meeting Workspace:
+  - Reordered the workspace so Structured notes and Transcript evidence are the top-level source record.
+  - Key decisions, action items, dates/follow-ups, and risks/review sections sit below.
+  - Removed duplicate action items from the right rail; the rail is now for quality, markers, and meeting details.
+
+- Live Capture UI:
+  - Restored `New Meeting`.
+  - Meeting Setup is visible during prep/startup.
+  - Start Recording hides Meeting Setup so Live Transcript gets the main vertical space.
+  - New Meeting restores Meeting Setup.
+
+- Meeting deletion:
+  - Delete now closes related popouts/workspace views before removing the folder.
+  - Active recording/processing/live-transcript folders are skipped.
+  - Read-only attributes are cleared before folder removal.
+  - Folder removal retries Windows/OneDrive-style access-denied cases where possible.
+  - A read-only temporary-folder deletion probe succeeded.
+
+- Verification:
+  - `py_compile` passed for changed files.
+  - Full test discovery passed: 34 tests OK.
 

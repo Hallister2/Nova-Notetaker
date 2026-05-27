@@ -86,10 +86,10 @@ def build_insights_from_notes(notes_path: Path) -> MeetingInsights:
                 section = ""
             continue
 
-        if not section or not line.startswith("-"):
+        if not section or not line.startswith(("-", "*")):
             continue
 
-        item_text = line.lstrip("- ").strip()
+        item_text = line.lstrip("-* ").strip()
         if not item_text or item_text.startswith("_"):
             continue
         if item_text.lower().rstrip(".") in {"none captured", "none"}:
@@ -161,13 +161,14 @@ def load_or_build_insights(folder: Path) -> MeetingInsights:
 def _parse_action(text: str) -> InsightItem:
     fields = _field_map(text)
     task = fields.get("task") or _strip_known_fields(text)
+    due_date, inferred_confidence = _extract_trailing_confidence(fields.get("due", ""))
     return InsightItem(
         kind="action",
         text=task,
         owner=fields.get("owner", "Unknown"),
-        due_date=fields.get("due", ""),
+        due_date=due_date,
         source=fields.get("source", ""),
-        confidence=_normalize_confidence(fields.get("confidence", "")),
+        confidence=_normalize_confidence(fields.get("confidence", "") or inferred_confidence),
     )
 
 
@@ -187,14 +188,14 @@ def _parse_decision(text: str) -> InsightItem | None:
 def _parse_date(text: str) -> InsightItem:
     fields = _field_map(text)
     date = fields.get("date") or fields.get("due") or ""
-    context = fields.get("context") or _strip_known_fields(text)
+    context, inferred_confidence = _extract_trailing_confidence(fields.get("context") or _strip_known_fields(text))
     return InsightItem(
         kind="date",
         text=context,
         due_date=date,
         context=context,
         source=fields.get("source", ""),
-        confidence=_normalize_confidence(fields.get("confidence", "")),
+        confidence=_normalize_confidence(fields.get("confidence", "") or inferred_confidence),
     )
 
 
@@ -218,8 +219,9 @@ def _looks_like_assignment(text: str) -> bool:
     decision_markers = ("decided", "decision", "agreed", "approved", "rejected", "keep ", "remain ", "not switching")
     if any(marker in lowered for marker in decision_markers):
         return False
+    if re.search(r"\b[A-Z][a-z]+\s+to\s+\w+", text):
+        return True
     assignment_markers = (
-        r"\b[A-Z][a-z]+\s+to\s+\w+",
         r"\bby\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|march|april|may|june|july|august|september|october|november|december)\b",
         r"\bwill own\b",
         r"\bplease\b",
@@ -237,6 +239,15 @@ def _normalize_confidence(value: str) -> str:
     if lowered in {"high", "medium", "low"}:
         return lowered.title()
     return value.strip()
+
+
+def _extract_trailing_confidence(value: str) -> tuple[str, str]:
+    match = re.search(r"\s*\((High|Medium|Low|Unknown)\)\s*$", value.strip(), flags=re.IGNORECASE)
+    if not match:
+        return value.strip(), ""
+    cleaned = value[: match.start()].strip()
+    confidence = "" if match.group(1).lower() == "unknown" else match.group(1)
+    return cleaned, confidence
 
 
 def _quality_warnings(insights: MeetingInsights) -> list[str]:
