@@ -375,79 +375,137 @@ class LiveTranscriptionWorker(QObject):
             self.finished.emit()
             return
 
-        parsed = urlparse(self.url)
-        scheme = "wss" if parsed.scheme == "https" else "ws"
-        host = parsed.hostname or self.url.replace("http://", "").replace("https://", "")
-        port = parsed.port or (443 if scheme == "wss" else 80)
-        ws_url = f"{scheme}://{host}:{port}"
+        ws_url = self._websocket_url()
+        ws: websocket.WebSocket | None = None
         try:
-            ws = websocket.create_connection(ws_url, timeout=self.timeout_seconds)
-            ws.send(
-                json.dumps(
-                    {
-                        "uid": self.client_uid,
-                        "language": self.language,
-                        "task": "transcribe",
-                        "model": self.model,
-                        "use_vad": self.use_vad,
-                        "send_last_n_segments": 4,
-                        "no_speech_thresh": 0.45,
-                        "clip_audio": False,
-                        "same_output_threshold": 4,
-                        "enable_translation": False,
-                        "target_language": "en",
-                        "hotwords": None,
-                        "enable_diarization": False,
-                        "max_speakers": 10,
-                        "word_timestamps": False,
-                    }
-                )
-            )
+            ws = self._connect_websocket(ws_url)
         except Exception as error:
-            self.status.emit(f"Live transcript unavailable: {error}")
+            if not self.stop_requested:
+                self.status.emit(f"Live transcript unavailable: {error}")
             self.finished.emit()
             return
 
-        self.status.emit("Live transcript connecting")
         try:
             while not self.stop_requested:
-                raw = ws.recv()
-                message = json.loads(raw) if raw else {}
-                if message.get("uid") not in (None, self.client_uid):
+                if ws is None:
+                    try:
+                        ws = self._connect_websocket(ws_url, reconnect=True)
+                    except Exception as error:
+                        self.status.emit(f"Live transcript reconnect failed: {error}")
+                        self._wait_before_reconnect()
+                        continue
+
+                if not self._receive_available_segments(ws):
+                    ws = self._close_websocket(ws)
                     continue
-                if message.get("message") == "SERVER_READY":
-                    break
-                if message.get("status") == "ERROR":
-                    raise RuntimeError(str(message.get("message", "WhisperLive server error")))
-            ws.settimeout(0.01)
-            self.status.emit("Live transcript listening")
-            while not self.stop_requested or not self.audio_queue.empty():
-                self._receive_available_segments(ws)
                 try:
                     queued = self.audio_queue.get(timeout=0.1)
                 except queue.Empty:
                     continue
                 if queued is None:
                     break
-                data, sample_rate, channels = queued
-                audio = WhisperLiveClient._pcm_bytes_to_float32(data, 2)
-                if channels > 1:
-                    audio = audio.reshape(-1, channels).mean(axis=1)
-                if sample_rate != 16000:
-                    audio = WhisperLiveClient._resample_linear(audio, sample_rate, 16000)
-                ws.send_binary(audio.astype("float32").tobytes())
-            ws.send("END_OF_AUDIO")
-            for _ in range(20):
-                self._receive_available_segments(ws)
+                try:
+                    self._send_audio_chunk(ws, queued)
+                except websocket.WebSocketConnectionClosedException:
+                    ws = self._close_websocket(ws)
+                    self._requeue_audio_chunk(queued)
+                except Exception as error:
+                    self.status.emit(f"Live transcript reconnecting after send failed: {error}")
+                    ws = self._close_websocket(ws)
+                    self._requeue_audio_chunk(queued)
+            if ws is not None:
+                try:
+                    ws.send("END_OF_AUDIO")
+                except Exception:
+                    pass
+                for _ in range(20):
+                    if not self._receive_available_segments(ws):
+                        break
         except Exception as error:
             if not self.stop_requested:
                 self.status.emit(f"Live transcript stopped: {error}")
         finally:
-            try:
-                ws.close()
-            except Exception:
-                pass
+            self._close_websocket(ws)
             self.finished.emit()
+
+    def _websocket_url(self) -> str:
+        parsed = urlparse(self.url)
+        scheme = "wss" if parsed.scheme == "https" else "ws"
+        host = parsed.hostname or self.url.replace("http://", "").replace("https://", "")
+        port = parsed.port or (443 if scheme == "wss" else 80)
+        return f"{scheme}://{host}:{port}"
+
+    def _connect_websocket(self, ws_url: str, reconnect: bool = False) -> websocket.WebSocket:
+        self.status.emit("Live transcript reconnecting" if reconnect else "Live transcript connecting")
+        ws = websocket.create_connection(ws_url, timeout=self.timeout_seconds)
+        ws.send(
+            json.dumps(
+                {
+                    "uid": self.client_uid,
+                    "language": self.language,
+                    "task": "transcribe",
+                    "model": self.model,
+                    "use_vad": self.use_vad,
+                    "send_last_n_segments": 4,
+                    "no_speech_thresh": 0.45,
+                    "clip_audio": False,
+                    "same_output_threshold": 4,
+                    "enable_translation": False,
+                    "target_language": "en",
+                    "hotwords": None,
+                    "enable_diarization": False,
+                    "max_speakers": 10,
+                    "word_timestamps": False,
+                }
+            )
+        )
+        self._wait_for_server_ready(ws)
+        ws.settimeout(0.01)
+        self.status.emit("Live transcript listening")
+        return ws
+
+    def _wait_for_server_ready(self, ws: websocket.WebSocket) -> None:
+        while not self.stop_requested:
+            raw = ws.recv()
+            message = json.loads(raw) if raw else {}
+            if message.get("uid") not in (None, self.client_uid):
+                continue
+            if message.get("message") == "SERVER_READY":
+                return
+            if message.get("status") == "ERROR":
+                raise RuntimeError(str(message.get("message", "WhisperLive server error")))
+        raise RuntimeError("Live transcript stopped before WhisperLive became ready.")
+
+    def _send_audio_chunk(self, ws: websocket.WebSocket, queued: tuple[bytes, int, int]) -> None:
+        data, sample_rate, channels = queued
+        audio = WhisperLiveClient._pcm_bytes_to_float32(data, 2)
+        if channels > 1:
+            audio = audio.reshape(-1, channels).mean(axis=1)
+        if sample_rate != 16000:
+            audio = WhisperLiveClient._resample_linear(audio, sample_rate, 16000)
+        ws.send_binary(audio.astype("float32").tobytes())
+
+    def _requeue_audio_chunk(self, queued: tuple[bytes, int, int]) -> None:
+        try:
+            self.audio_queue.put_nowait(queued)
+        except queue.Full:
+            pass
+
+    def _wait_before_reconnect(self) -> None:
+        for _ in range(10):
+            if self.stop_requested:
+                return
+            QThread.msleep(100)
+
+    @staticmethod
+    def _close_websocket(ws: websocket.WebSocket | None) -> None:
+        if ws is None:
+            return None
+        try:
+            ws.close()
+        except Exception:
+            pass
+        return None
 
     @Slot(bytes, int, int)
     def enqueue_audio(self, data: bytes, sample_rate: int, channels: int) -> None:
@@ -466,22 +524,38 @@ class LiveTranscriptionWorker(QObject):
         except queue.Full:
             pass
 
-    def _receive_available_segments(self, ws: websocket.WebSocket) -> None:
+    def _receive_available_segments(self, ws: websocket.WebSocket) -> bool:
         while True:
             try:
                 raw = ws.recv()
             except websocket.WebSocketTimeoutException:
-                return
-            except Exception:
-                return
+                return True
+            except websocket.WebSocketConnectionClosedException:
+                if not self.stop_requested:
+                    self.status.emit("Live transcript connection closed; reconnecting.")
+                return False
+            except Exception as error:
+                if not self.stop_requested:
+                    self.status.emit(f"Live transcript receive failed; reconnecting: {error}")
+                return False
             if not raw:
-                return
+                return True
             try:
                 message = json.loads(raw)
             except json.JSONDecodeError:
                 continue
             if message.get("uid") not in (None, self.client_uid):
                 continue
+            if message.get("message") == "DISCONNECT":
+                if not self.stop_requested:
+                    self.status.emit("Live transcript server disconnected; reconnecting.")
+                return False
+            if message.get("status") == "ERROR":
+                if not self.stop_requested:
+                    self.status.emit(
+                        f"Live transcript server error; reconnecting: {message.get('message', 'unknown error')}"
+                    )
+                return False
             for segment in message.get("segments", []):
                 text = str(segment.get("text", "")).strip()
                 if not text:

@@ -153,17 +153,16 @@ class CaptureService:
             pa = pyaudio.PyAudio()
             chunk = 1024
             sample_rate = self.config.loopback_sample_rate
-            channels = self.config.loopback_channels
+            requested_channels = self.config.loopback_channels
             sample_format = pyaudio.paInt16
 
             try:
-                stream = pa.open(
-                    format=sample_format,
-                    channels=channels,
-                    rate=sample_rate,
-                    input=True,
-                    input_device_index=self.config.loopback_device_index,
-                    frames_per_buffer=chunk,
+                stream, channels = self._open_loopback_stream(
+                    pa,
+                    sample_format=sample_format,
+                    sample_rate=sample_rate,
+                    requested_channels=requested_channels,
+                    chunk=chunk,
                 )
                 with self.stream_lock:
                     self.loopback_stream = stream
@@ -204,6 +203,36 @@ class CaptureService:
                 pa.terminate()
         except Exception as error:
             self._emit_status(f"System loopback capture failed: {error}")
+
+    def _open_loopback_stream(self, pa, sample_format: int, sample_rate: int, requested_channels: int, chunk: int):
+        errors: list[str] = []
+        for channels in self._loopback_channel_candidates(requested_channels):
+            try:
+                stream = pa.open(
+                    format=sample_format,
+                    channels=channels,
+                    rate=sample_rate,
+                    input=True,
+                    input_device_index=self.config.loopback_device_index,
+                    frames_per_buffer=chunk,
+                )
+                if channels != requested_channels:
+                    self._emit_status(
+                        f"System loopback using {channels} channel(s); device rejected {requested_channels}."
+                    )
+                return stream, channels
+            except Exception as error:
+                errors.append(f"{channels} channel(s): {error}")
+        raise RuntimeError("; ".join(errors) or "Could not open system loopback stream")
+
+    @staticmethod
+    def _loopback_channel_candidates(requested_channels: int) -> list[int]:
+        candidates = [requested_channels, 2, 1]
+        unique: list[int] = []
+        for channels in candidates:
+            if channels > 0 and channels not in unique:
+                unique.append(channels)
+        return unique
 
     def _emit_live_audio(self, data: bytes, sample_rate: int, channels: int) -> None:
         callback = self.config.live_audio_callback
