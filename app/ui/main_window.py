@@ -97,10 +97,11 @@ CLOSED_ACTION_STATUSES = {"done", "closed"}
 NAV_ASSETS = [
     ("Capture - Default.png", "Capture - Active.png"),
     ("Meetings - Default.png", "Meetings - Active.png"),
+    ("Review - Default.png", "Review - Active.png"),
     ("Meetings - Default.png", "Meetings - Active.png"),
     ("Review - Default.png", "Review - Active.png"),
-    ("Review - Default.png", "Review - Active.png"),
     ("Templates - Default.png", "Templates - Active.png"),
+    ("Settings - Default.png", "Settings - Active.png"),
     ("Settings - Default.png", "Settings - Active.png"),
 ]
 
@@ -581,8 +582,8 @@ class MainWindow(QMainWindow):
         self.processing_started_at: datetime | None = None
         self.timer_phase = "idle"
         self.nav_buttons: list[QPushButton] = []
-        self.nav_button_labels = ["Live Capture", "Meetings", "Search", "Calendar", "Logs", "Templates", "Settings"]
-        self.compact_nav_labels = ["Live", "Meet", "Search", "Cal", "Logs", "Tpl", "Set"]
+        self.nav_button_labels = ["Live Capture", "Meetings", "Review", "Search", "Calendar", "Logs", "Templates", "Settings"]
+        self.compact_nav_labels = ["Live", "Meet", "Review", "Search", "Cal", "Logs", "Tpl", "Set"]
         self.current_responsive_mode = ""
         self.stop_requested = False
         self.meeting_overview_windows: list[QDialog] = []
@@ -624,6 +625,7 @@ class MainWindow(QMainWindow):
         self.pages.addWidget(self._build_meetings_page())
         self.overview_workspace_page = self._build_overview_workspace_page()
         self.pages.addWidget(self.overview_workspace_page)
+        self.pages.addWidget(self._build_review_queue_page())
         self.pages.addWidget(self._build_search_page())
         self.pages.addWidget(self._build_calendar_page())
         self.pages.addWidget(self._build_logs_page())
@@ -1159,10 +1161,16 @@ class MainWindow(QMainWindow):
         self.refresh_meetings_button.clicked.connect(self.refresh_meetings)
         self.reprocess_button = QPushButton("Reprocess")
         self.reprocess_button.clicked.connect(self.reprocess_selected_meeting)
+        self.repair_meeting_button = QPushButton("Repair selected")
+        self.repair_meeting_button.clicked.connect(self.repair_selected_meeting)
         self.batch_reprocess_button = QPushButton("Batch reprocess")
         self.batch_reprocess_button.clicked.connect(self.batch_reprocess_selected_meetings)
+        self.rebuild_index_button = QPushButton("Rebuild index")
+        self.rebuild_index_button.clicked.connect(self.rebuild_meeting_intelligence_index)
         self.open_folder_button = QPushButton("Open folder")
         self.open_folder_button.clicked.connect(self.open_selected_meeting_folder)
+        self.pin_meeting_button = QPushButton("Pin important")
+        self.pin_meeting_button.clicked.connect(self.mark_selected_meeting_important)
         self.export_html_button = QPushButton("Export briefing")
         self.export_html_button.clicked.connect(self.export_selected_executive_briefing)
         self.export_calendar_button = QPushButton("Export calendar")
@@ -1172,8 +1180,11 @@ class MainWindow(QMainWindow):
         archive_button_list = (
             self.refresh_meetings_button,
             self.reprocess_button,
+            self.repair_meeting_button,
             self.batch_reprocess_button,
+            self.rebuild_index_button,
             self.open_folder_button,
+            self.pin_meeting_button,
             self.export_html_button,
             self.export_calendar_button,
             self.delete_meeting_button,
@@ -1235,6 +1246,98 @@ class MainWindow(QMainWindow):
         self.overview_workspace_layout.addWidget(self.overview_workspace_empty, stretch=1)
         return page
 
+    def _build_review_queue_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(34, 28, 18, 28)
+        layout.setSpacing(14)
+
+        header = QHBoxLayout()
+        title_block = QVBoxLayout()
+        title = QLabel("Review Queue")
+        title.setObjectName("Title")
+        title_block.addWidget(title)
+        title_block.addWidget(self._muted_label("Today view for stuck meetings, pinned work, due actions, and recent output."))
+        header.addLayout(title_block)
+        header.addStretch()
+        self.review_refresh_button = QPushButton("Refresh")
+        self.review_refresh_button.clicked.connect(self.refresh_review_center)
+        header.addWidget(self.review_refresh_button)
+        layout.addLayout(header)
+
+        metrics = QGridLayout()
+        metrics.setHorizontalSpacing(10)
+        metrics.setVerticalSpacing(10)
+        self.review_metric_attention = QLabel("0")
+        self.review_metric_failed = QLabel("0")
+        self.review_metric_due = QLabel("0")
+        self.review_metric_pinned = QLabel("0")
+        metrics.addWidget(self._metric_card("Needs attention", self.review_metric_attention), 0, 0)
+        metrics.addWidget(self._metric_card("Repair / failed", self.review_metric_failed), 0, 1)
+        metrics.addWidget(self._metric_card("Due soon", self.review_metric_due), 0, 2)
+        metrics.addWidget(self._metric_card("Pinned", self.review_metric_pinned), 0, 3)
+        layout.addLayout(metrics)
+
+        panel = QFrame()
+        panel.setObjectName("Panel")
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(18, 18, 18, 18)
+        panel_layout.setSpacing(12)
+        panel_layout.addWidget(self._section_label("Meeting queue"))
+        self.review_meetings_table = QTableWidget(0, 7)
+        self.review_meetings_table.setHorizontalHeaderLabels(["Priority", "Meeting", "Status", "Readiness", "Actions", "Review", "Open"])
+        self.review_meetings_table.setMinimumWidth(0)
+        self.review_meetings_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self._configure_table(self.review_meetings_table)
+        self.review_meetings_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.review_meetings_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.review_meetings_table.itemDoubleClicked.connect(lambda _item: self._open_review_queue_meeting())
+        self.review_meetings_table.verticalHeader().setVisible(False)
+        self.review_meetings_table.verticalHeader().setDefaultSectionSize(44)
+        review_header = self.review_meetings_table.horizontalHeader()
+        review_header.setSectionResizeMode(0, QHeaderView.Fixed)
+        review_header.setSectionResizeMode(1, QHeaderView.Stretch)
+        review_header.setSectionResizeMode(2, QHeaderView.Fixed)
+        review_header.setSectionResizeMode(3, QHeaderView.Fixed)
+        review_header.setSectionResizeMode(4, QHeaderView.Fixed)
+        review_header.setSectionResizeMode(5, QHeaderView.Fixed)
+        review_header.setSectionResizeMode(6, QHeaderView.Fixed)
+        self.review_meetings_table.setColumnWidth(0, 90)
+        self.review_meetings_table.setColumnWidth(2, 150)
+        self.review_meetings_table.setColumnWidth(3, 90)
+        self.review_meetings_table.setColumnWidth(4, 72)
+        self.review_meetings_table.setColumnWidth(5, 72)
+        self.review_meetings_table.setColumnWidth(6, 92)
+        panel_layout.addWidget(self.review_meetings_table, stretch=2)
+
+        panel_layout.addWidget(self._section_label("Due and owner cleanup"))
+        self.review_actions_table = QTableWidget(0, 7)
+        self.review_actions_table.setHorizontalHeaderLabels(["Meeting", "Owner", "Action", "Due", "Status", "Done", "Open"])
+        self.review_actions_table.setMinimumWidth(0)
+        self.review_actions_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self._configure_table(self.review_actions_table)
+        self.review_actions_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.review_actions_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.review_actions_table.verticalHeader().setVisible(False)
+        self.review_actions_table.verticalHeader().setDefaultSectionSize(42)
+        action_header = self.review_actions_table.horizontalHeader()
+        action_header.setSectionResizeMode(0, QHeaderView.Fixed)
+        action_header.setSectionResizeMode(1, QHeaderView.Fixed)
+        action_header.setSectionResizeMode(2, QHeaderView.Stretch)
+        action_header.setSectionResizeMode(3, QHeaderView.Fixed)
+        action_header.setSectionResizeMode(4, QHeaderView.Fixed)
+        action_header.setSectionResizeMode(5, QHeaderView.Fixed)
+        action_header.setSectionResizeMode(6, QHeaderView.Fixed)
+        self.review_actions_table.setColumnWidth(0, 190)
+        self.review_actions_table.setColumnWidth(1, 110)
+        self.review_actions_table.setColumnWidth(3, 140)
+        self.review_actions_table.setColumnWidth(4, 96)
+        self.review_actions_table.setColumnWidth(5, 72)
+        self.review_actions_table.setColumnWidth(6, 82)
+        panel_layout.addWidget(self.review_actions_table, stretch=1)
+        layout.addWidget(panel, stretch=1)
+        return page
+
     def _build_actions_page(self, embedded: bool = False) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -1284,10 +1387,10 @@ class MainWindow(QMainWindow):
             "No action items",
             "Open follow-ups from processed meetings will appear here.",
         )
-        self.action_dashboard_table = QTableWidget(0, 7)
+        self.action_dashboard_table = QTableWidget(0, 9)
         self.action_dashboard_table.setMinimumWidth(0)
         self.action_dashboard_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.action_dashboard_table.setHorizontalHeaderLabels(["Meeting", "Owner", "Action", "Due", "Confidence", "Status", "Open"])
+        self.action_dashboard_table.setHorizontalHeaderLabels(["Meeting", "Owner", "Action", "Due", "Confidence", "Status", "Done", "Edit", "Open"])
         self._configure_table(self.action_dashboard_table)
         self.action_dashboard_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.action_dashboard_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -1301,12 +1404,16 @@ class MainWindow(QMainWindow):
         action_header.setSectionResizeMode(4, QHeaderView.Fixed)
         action_header.setSectionResizeMode(5, QHeaderView.Fixed)
         action_header.setSectionResizeMode(6, QHeaderView.Fixed)
+        action_header.setSectionResizeMode(7, QHeaderView.Fixed)
+        action_header.setSectionResizeMode(8, QHeaderView.Fixed)
         self.action_dashboard_table.setColumnWidth(0, 190)
         self.action_dashboard_table.setColumnWidth(1, 96)
         self.action_dashboard_table.setColumnWidth(3, 128)
         self.action_dashboard_table.setColumnWidth(4, 98)
         self.action_dashboard_table.setColumnWidth(5, 132)
-        self.action_dashboard_table.setColumnWidth(6, 96)
+        self.action_dashboard_table.setColumnWidth(6, 72)
+        self.action_dashboard_table.setColumnWidth(7, 78)
+        self.action_dashboard_table.setColumnWidth(8, 96)
 
         panel_layout.addWidget(self.actions_empty_state, stretch=1)
         panel_layout.addWidget(self.action_dashboard_table, stretch=1)
@@ -3393,7 +3500,7 @@ class MainWindow(QMainWindow):
         return min(device.channels, 2)
 
     def open_settings(self) -> None:
-        self._set_active_nav(7)
+        self._set_active_nav(8)
 
     def _populate_settings_device_controls(self) -> None:
         if not hasattr(self, "settings_mic_combo"):
@@ -3611,8 +3718,12 @@ class MainWindow(QMainWindow):
         self._set_elapsed_text("00:00:00")
         if hasattr(self, "reprocess_button"):
             self.reprocess_button.setEnabled(True)
+        if hasattr(self, "repair_meeting_button"):
+            self.repair_meeting_button.setEnabled(True)
         if hasattr(self, "batch_reprocess_button"):
             self.batch_reprocess_button.setEnabled(True)
+        if hasattr(self, "rebuild_index_button"):
+            self.rebuild_index_button.setEnabled(True)
         if hasattr(self, "refresh_meetings_button"):
             self.refresh_meetings_button.setEnabled(True)
         if hasattr(self, "open_folder_button"):
@@ -3786,9 +3897,190 @@ class MainWindow(QMainWindow):
     def refresh_review_center(self) -> None:
         if hasattr(self, "action_dashboard_table"):
             self._refresh_action_dashboard()
+        if hasattr(self, "review_meetings_table"):
+            self._refresh_review_queue()
         if hasattr(self, "calendar_table"):
             self._populate_calendar_meeting_filter()
             self._refresh_calendar_candidates()
+
+    def _refresh_review_queue(self) -> None:
+        self.review_meetings_table.setRowCount(0)
+        self.review_actions_table.setRowCount(0)
+        attention_count = 0
+        failed_count = 0
+        due_soon_count = 0
+        pinned_count = 0
+        recent_rows: list[tuple[int, Path, MeetingMetadata, MeetingInsights, str, int, int, bool]] = []
+
+        for folder in self.meeting_store.list_meetings():
+            try:
+                metadata = self.meeting_store.read_metadata(folder)
+                insights = load_or_build_insights(folder)
+            except Exception:
+                continue
+            open_actions = sum(1 for item in insights.actions if item.status.lower() not in CLOSED_ACTION_STATUSES)
+            review_count = len(insights.quality_warnings) + len(insights.warnings)
+            has_transcript = self._meeting_has_transcript(folder)
+            status_label = self._meeting_status_label(metadata.status, review_count, has_transcript)
+            score, _score_lines = self._meeting_readiness_score(folder, metadata, insights)
+            pinned = self._meeting_is_important(folder)
+            needs_repair = status_label in {"Processing failed", "Missing transcript"} or not (folder / "notes.md").exists()
+            priority = self._review_priority(pinned, needs_repair, review_count, open_actions, score)
+            if pinned:
+                pinned_count += 1
+            if needs_repair:
+                failed_count += 1
+            if needs_repair or review_count or open_actions:
+                attention_count += 1
+                recent_rows.append((priority, folder, metadata, insights, status_label, open_actions, review_count, pinned))
+            elif len(recent_rows) < 8:
+                recent_rows.append((priority, folder, metadata, insights, status_label, open_actions, review_count, pinned))
+
+            for action_index, action in enumerate(insights.actions):
+                if action.status.lower() in CLOSED_ACTION_STATUSES:
+                    continue
+                if self._action_is_due_soon(action) or not action.owner or action.owner.lower() == "unknown":
+                    if self._action_is_due_soon(action):
+                        due_soon_count += 1
+                    self._add_review_action_row(folder, metadata, action, action_index)
+
+        for _priority, folder, metadata, insights, status_label, open_actions, review_count, pinned in sorted(recent_rows, key=lambda item: item[0])[:12]:
+            self._add_review_meeting_row(folder, metadata, insights, status_label, open_actions, review_count, pinned)
+
+        self.review_metric_attention.setText(str(attention_count))
+        self.review_metric_failed.setText(str(failed_count))
+        self.review_metric_due.setText(str(due_soon_count))
+        self.review_metric_pinned.setText(str(pinned_count))
+
+    @staticmethod
+    def _review_priority(pinned: bool, needs_repair: bool, review_count: int, open_actions: int, score: int) -> int:
+        priority = 0 if pinned else 100
+        priority += 0 if needs_repair else 25
+        priority += max(0, 30 - min(review_count, 30))
+        priority += max(0, 20 - min(open_actions, 20))
+        priority += score
+        return priority
+
+    def _add_review_meeting_row(
+        self,
+        folder: Path,
+        metadata: MeetingMetadata,
+        insights: MeetingInsights,
+        status_label: str,
+        open_actions: int,
+        review_count: int,
+        pinned: bool,
+    ) -> None:
+        row = self.review_meetings_table.rowCount()
+        self.review_meetings_table.insertRow(row)
+        score, _score_lines = self._meeting_readiness_score(folder, metadata, insights)
+        values = [
+            "Pinned" if pinned else ("Repair" if status_label in {"Processing failed", "Missing transcript"} else "Review"),
+            metadata.title or folder.name,
+            status_label,
+            f"{score}%",
+            str(open_actions),
+            str(review_count),
+        ]
+        for column, value in enumerate(values):
+            item = QTableWidgetItem(value)
+            item.setData(Qt.UserRole, str(folder))
+            if column in (0, 2, 3, 4, 5):
+                item.setTextAlignment(Qt.AlignCenter)
+            self.review_meetings_table.setItem(row, column, item)
+        open_button = QPushButton("Open")
+        open_button.setObjectName("TableActionButton")
+        open_button.setFixedSize(76, 30)
+        open_button.clicked.connect(lambda checked=False, meeting_folder=folder: self.open_meeting_overview(meeting_folder))
+        open_item = QTableWidgetItem("")
+        open_item.setData(Qt.UserRole, str(folder))
+        self.review_meetings_table.setItem(row, 6, open_item)
+        self.review_meetings_table.setCellWidget(row, 6, open_button)
+
+    def _add_review_action_row(self, folder: Path, metadata: MeetingMetadata, action: InsightItem, action_index: int) -> None:
+        row = self.review_actions_table.rowCount()
+        self.review_actions_table.insertRow(row)
+        values = [
+            metadata.title or folder.name,
+            action.owner or "Unknown",
+            action.text,
+            action.due_date or "Unknown",
+            action.status or "open",
+        ]
+        for column, value in enumerate(values):
+            item = QTableWidgetItem(value)
+            item.setData(Qt.UserRole, str(folder))
+            item.setData(Qt.UserRole + 1, action_index)
+            if column in (1, 3, 4):
+                item.setTextAlignment(Qt.AlignCenter)
+            self.review_actions_table.setItem(row, column, item)
+        done_button = QPushButton("Done")
+        done_button.setObjectName("SubtleActionButton")
+        done_button.setFixedSize(60, 28)
+        done_button.clicked.connect(lambda checked=False, meeting_folder=folder, index=action_index: self._update_action_status(meeting_folder, index, "done"))
+        self.review_actions_table.setCellWidget(row, 5, done_button)
+        open_button = QPushButton("Open")
+        open_button.setObjectName("TableActionButton")
+        open_button.setFixedSize(72, 28)
+        open_button.clicked.connect(lambda checked=False, meeting_folder=folder: self.open_meeting_overview(meeting_folder))
+        self.review_actions_table.setCellWidget(row, 6, open_button)
+
+    def _open_review_queue_meeting(self) -> None:
+        item = self.review_meetings_table.currentItem()
+        if item is None:
+            return
+        folder_value = item.data(Qt.UserRole)
+        if folder_value:
+            self.open_meeting_overview(Path(str(folder_value)))
+
+    def _meeting_has_transcript(self, folder: Path) -> bool:
+        transcript_path = folder / "transcript.md"
+        if not transcript_path.exists():
+            return False
+        transcript_text = transcript_path.read_text(encoding="utf-8", errors="ignore")
+        return bool(MeetingProcessor._usable_existing_transcript_text(transcript_text).strip())
+
+    def _action_is_due_soon(self, action: InsightItem, days: int = 7) -> bool:
+        due_date = self._calendar_qdate_from_text(action.due_date, None)
+        if due_date is None:
+            return False
+        delta = QDate.currentDate().daysTo(due_date)
+        return 0 <= delta <= days
+
+    def _meeting_is_important(self, folder: Path) -> bool:
+        return any(str(marker.get("type", "")).lower() == "important" for marker in self.meeting_store.read_markers(folder))
+
+    def _meeting_readiness_score(self, folder: Path, metadata: MeetingMetadata, insights: MeetingInsights) -> tuple[int, list[str]]:
+        score = 100
+        lines: list[str] = []
+        if not self._meeting_has_transcript(folder):
+            score -= 30
+            lines.append("Transcript missing")
+        if not (folder / "notes.md").exists():
+            score -= 25
+            lines.append("Notes missing")
+        if "failed" in metadata.status.lower():
+            score -= 25
+            lines.append("Processing failed")
+        unknown_owner_count = sum(1 for item in insights.actions if not item.owner or item.owner.lower() == "unknown")
+        unknown_due_count = sum(1 for item in insights.actions if not item.due_date or item.due_date.lower() == "unknown")
+        low_confidence_count = sum(
+            1
+            for item in [*insights.actions, *insights.decisions, *insights.dates]
+            if item.confidence.lower() in {"low", "tentative"}
+        )
+        if unknown_owner_count:
+            score -= min(15, unknown_owner_count * 5)
+            lines.append(f"{unknown_owner_count} action owner(s) missing")
+        if unknown_due_count:
+            score -= min(10, unknown_due_count * 3)
+            lines.append(f"{unknown_due_count} action due date(s) missing")
+        if low_confidence_count:
+            score -= min(10, low_confidence_count * 3)
+            lines.append(f"{low_confidence_count} low-confidence item(s)")
+        if not lines:
+            lines.append("Ready for review/export")
+        return max(0, min(100, score)), lines
 
     def _populate_calendar_meeting_filter(self) -> None:
         if not hasattr(self, "calendar_meeting_filter"):
@@ -3859,6 +4151,26 @@ class MainWindow(QMainWindow):
                 )
                 self.action_dashboard_table.setCellWidget(row, 5, status_combo)
 
+                done_button = QPushButton("Done")
+                done_button.setObjectName("SubtleActionButton")
+                done_button.setFixedSize(60, 28)
+                done_button.clicked.connect(lambda checked=False, meeting_folder=folder, action_index=action_index: self._update_action_status(meeting_folder, action_index, "done"))
+                done_item = QTableWidgetItem("")
+                done_item.setData(Qt.UserRole, str(folder))
+                done_item.setData(Qt.UserRole + 1, action_index)
+                self.action_dashboard_table.setItem(row, 6, done_item)
+                self.action_dashboard_table.setCellWidget(row, 6, done_button)
+
+                edit_button = QPushButton("Edit")
+                edit_button.setObjectName("SubtleActionButton")
+                edit_button.setFixedSize(62, 28)
+                edit_button.clicked.connect(lambda checked=False, meeting_folder=folder, action_index=action_index: self.edit_action_item(meeting_folder, action_index))
+                edit_item = QTableWidgetItem("")
+                edit_item.setData(Qt.UserRole, str(folder))
+                edit_item.setData(Qt.UserRole + 1, action_index)
+                self.action_dashboard_table.setItem(row, 7, edit_item)
+                self.action_dashboard_table.setCellWidget(row, 7, edit_button)
+
                 open_button = QPushButton("Open")
                 open_button.setObjectName("TableActionButton")
                 open_button.setFixedSize(82, 28)
@@ -3866,8 +4178,8 @@ class MainWindow(QMainWindow):
                 open_item = QTableWidgetItem("")
                 open_item.setData(Qt.UserRole, str(folder))
                 open_item.setData(Qt.UserRole + 1, action_index)
-                self.action_dashboard_table.setItem(row, 6, open_item)
-                self.action_dashboard_table.setCellWidget(row, 6, open_button)
+                self.action_dashboard_table.setItem(row, 8, open_item)
+                self.action_dashboard_table.setCellWidget(row, 8, open_button)
                 self.action_dashboard_table.setRowHeight(row, 38)
         has_rows = self.action_dashboard_table.rowCount() > 0
         self.action_dashboard_table.setVisible(has_rows)
@@ -4232,7 +4544,8 @@ class MainWindow(QMainWindow):
         details_layout.addWidget(self._section_label("Meeting intelligence"))
 
         insights = load_or_build_insights(folder)
-        details_layout.addWidget(self._overview_quality_card(metadata, insights))
+        details_layout.addWidget(self._overview_quality_card(folder, metadata, insights))
+        details_layout.addWidget(self._overview_resolve_checklist_card(folder, metadata, insights, dialog))
         details_layout.addWidget(self._overview_markers_card(folder))
         details_layout.addWidget(self._overview_action_items_card(folder, insights))
         for title_text, items in (
@@ -4401,7 +4714,8 @@ class MainWindow(QMainWindow):
         intelligence_layout.setContentsMargins(16, 16, 16, 16)
         intelligence_layout.setSpacing(12)
         intelligence_layout.addWidget(self._section_label("Review controls"))
-        intelligence_layout.addWidget(self._overview_quality_card(metadata, insights))
+        intelligence_layout.addWidget(self._overview_quality_card(folder, metadata, insights))
+        intelligence_layout.addWidget(self._overview_resolve_checklist_card(folder, metadata, insights))
         intelligence_layout.addWidget(self._overview_markers_card(folder))
         details = QTextEdit()
         details.setReadOnly(True)
@@ -4467,6 +4781,34 @@ class MainWindow(QMainWindow):
     def mark_current_meeting_important(self) -> None:
         self._append_current_marker("important", "Marked important")
 
+    def mark_selected_meeting_important(self) -> None:
+        folder = self._selected_meeting_folder()
+        if folder is None:
+            QMessageBox.information(self, "Nova Notetaker", "Select a meeting to pin.")
+            return
+        self.mark_meeting_important(folder)
+
+    def mark_meeting_important(self, folder: Path) -> None:
+        markers = self.meeting_store.read_markers(folder)
+        if any(str(marker.get("type", "")).lower() == "important" for marker in markers):
+            if hasattr(self, "archive_status"):
+                self.archive_status.setText("Meeting already pinned")
+            return
+        markers.append(
+            {
+                "type": "important",
+                "text": "Pinned important",
+                "created_at": datetime.now().isoformat(timespec="seconds"),
+                "offset_seconds": 0,
+                "offset_label": "Pinned",
+            }
+        )
+        self.meeting_store.write_markers(folder, markers)
+        if hasattr(self, "archive_status"):
+            self.archive_status.setText("Meeting pinned")
+        self.refresh_review_center()
+        self.log(f"Pinned important meeting: {folder.name}")
+
     def add_current_meeting_note(self) -> None:
         text, accepted = QInputDialog.getText(self, "Add Meeting Note", "Note")
         if not accepted or not text.strip():
@@ -4486,9 +4828,10 @@ class MainWindow(QMainWindow):
             "offset_label": self._format_duration(seconds),
         }
         self.meeting_store.append_marker(self.meeting_folder, marker)
+        self.refresh_review_center()
         self.log(f"Added meeting marker at {marker['offset_label']}: {text}")
 
-    def _overview_quality_card(self, metadata: MeetingMetadata, insights: MeetingInsights) -> QFrame:
+    def _overview_quality_card(self, folder: Path, metadata: MeetingMetadata, insights: MeetingInsights) -> QFrame:
         card = QFrame()
         card.setObjectName("RaisedPanel")
         layout = QVBoxLayout(card)
@@ -4506,7 +4849,9 @@ class MainWindow(QMainWindow):
         mic_audio = metadata.audio_files.get("mic", {}) if isinstance(metadata.audio_files, dict) else {}
         duration = max(float(system_audio.get("duration_seconds") or 0), float(mic_audio.get("duration_seconds") or 0))
         warnings = metadata.processing.get("warnings", []) if isinstance(metadata.processing, dict) else []
+        readiness_score, readiness_lines = self._meeting_readiness_score(folder, metadata, insights)
         summary = [
+            f"Readiness: {readiness_score}%",
             f"Recording: {self._format_duration(duration)}" if duration else "Recording: unknown",
             f"Transcript: {'available' if transcript_ok else 'missing'}",
             f"Open actions: {sum(1 for item in insights.actions if item.status.lower() not in CLOSED_ACTION_STATUSES)}",
@@ -4516,6 +4861,53 @@ class MainWindow(QMainWindow):
             label = QLabel(line)
             label.setWordWrap(True)
             layout.addWidget(label)
+        for line in readiness_lines[:3]:
+            layout.addWidget(self._muted_label(f"- {line}"))
+        return card
+
+    def _overview_resolve_checklist_card(
+        self,
+        folder: Path,
+        metadata: MeetingMetadata,
+        insights: MeetingInsights,
+        dialog: QDialog | None = None,
+    ) -> QFrame:
+        card = QFrame()
+        card.setObjectName("RaisedPanel")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(8)
+        layout.addWidget(self._section_label("Resolve meeting"))
+        checks = [
+            ("Transcript", self._meeting_has_transcript(folder)),
+            ("Notes", (folder / "notes.md").exists()),
+            ("Actions reviewed", not any(item.status.lower() not in CLOSED_ACTION_STATUSES for item in insights.actions)),
+            ("Warnings clear", not insights.quality_warnings and not insights.warnings),
+            ("Pinned if important", self._meeting_is_important(folder)),
+        ]
+        for label, complete in checks:
+            prefix = "Done" if complete else "Open"
+            row = QLabel(f"{prefix}: {label}")
+            row.setWordWrap(True)
+            layout.addWidget(row)
+        actions = QGridLayout()
+        actions.setHorizontalSpacing(6)
+        actions.setVerticalSpacing(6)
+        repair_button = QPushButton("Repair")
+        repair_button.setObjectName("SubtleActionButton")
+        repair_button.clicked.connect(lambda checked=False, meeting_folder=folder: self.repair_meeting(meeting_folder))
+        export_button = QPushButton("Export")
+        export_button.setObjectName("SubtleActionButton")
+        export_button.clicked.connect(lambda checked=False, meeting_folder=folder: self._export_executive_briefing_for_folder(meeting_folder))
+        rename_button = QPushButton("Speakers")
+        rename_button.setObjectName("SubtleActionButton")
+        rename_button.clicked.connect(lambda checked=False, meeting_folder=folder: self.rename_speakers_for_meeting(meeting_folder))
+        pin_button = QPushButton("Pin")
+        pin_button.setObjectName("SubtleActionButton")
+        pin_button.clicked.connect(lambda checked=False, meeting_folder=folder: self.mark_meeting_important(meeting_folder))
+        for index, button in enumerate((repair_button, export_button, rename_button, pin_button)):
+            actions.addWidget(button, index // 2, index % 2)
+        layout.addLayout(actions)
         return card
 
     def _overview_markers_card(self, folder: Path) -> QFrame:
@@ -4578,18 +4970,152 @@ class MainWindow(QMainWindow):
                 lambda status, action_index=index, meeting_folder=folder: self._update_action_status(meeting_folder, action_index, status)
             )
             row.layout().addWidget(status_combo)
+            edit_button = QPushButton("Edit")
+            edit_button.setObjectName("SubtleActionButton")
+            edit_button.setMinimumHeight(32)
+            edit_button.clicked.connect(lambda checked=False, action_index=index, meeting_folder=folder: self.edit_action_item(meeting_folder, action_index))
+            row.layout().addWidget(edit_button)
             layout.addWidget(row)
         return card
+
+    def edit_action_item(self, folder: Path, action_index: int) -> None:
+        insights = load_or_build_insights(folder)
+        if action_index >= len(insights.actions):
+            return
+        item = insights.actions[action_index]
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Edit Action Item")
+        dialog.setStyleSheet(build_stylesheet(self.current_theme))
+        layout = QVBoxLayout(dialog)
+        form = QFormLayout()
+        owner_edit = QLineEdit(item.owner or "Unknown")
+        due_edit = QLineEdit(item.due_date or "Unknown")
+        task_edit = QTextEdit()
+        task_edit.setPlainText(item.text)
+        task_edit.setMinimumHeight(90)
+        confidence_combo = QComboBox()
+        confidence_combo.addItems(["High", "Medium", "Low", "Tentative", ""])
+        confidence_combo.setCurrentText(item.confidence if item.confidence in {"High", "Medium", "Low", "Tentative"} else "")
+        status_combo = QComboBox()
+        status_combo.addItems(["open", "in progress", "done", "deferred", "closed"])
+        status_combo.setCurrentText(item.status or "open")
+        form.addRow("Owner", owner_edit)
+        form.addRow("Due", due_edit)
+        form.addRow("Confidence", confidence_combo)
+        form.addRow("Status", status_combo)
+        form.addRow("Task", task_edit)
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        item.owner = owner_edit.text().strip() or "Unknown"
+        item.due_date = due_edit.text().strip() or "Unknown"
+        item.text = task_edit.toPlainText().strip() or item.text
+        item.confidence = confidence_combo.currentText().strip()
+        item.status = status_combo.currentText().strip() or "open"
+        insights.quality_warnings = self._quality_warnings_for_actions(insights)
+        write_insights_json(folder, insights)
+        self.refresh_meetings()
+        self.refresh_review_center()
+        self._refresh_action_dashboard()
+        self.log(f"Edited action item: {folder.name}")
 
     def _update_action_status(self, folder: Path, action_index: int, status: str) -> None:
         insights = load_or_build_insights(folder)
         if action_index >= len(insights.actions):
             return
         insights.actions[action_index].status = status
+        insights.quality_warnings = self._quality_warnings_for_actions(insights)
         write_insights_json(folder, insights)
         self.refresh_meetings()
         self.refresh_review_center()
         self.log(f"Updated action status to {status}: {folder.name}")
+
+    @staticmethod
+    def _quality_warnings_for_actions(insights: MeetingInsights) -> list[str]:
+        warnings = [warning for warning in insights.quality_warnings if "action item" not in warning.lower()]
+        unknown_owner_count = sum(1 for item in insights.actions if not item.owner or item.owner.lower() == "unknown")
+        unknown_due_count = sum(1 for item in insights.actions if not item.due_date or item.due_date.lower() == "unknown")
+        if unknown_owner_count:
+            warnings.append(f"{unknown_owner_count} action item(s) need an owner.")
+        if unknown_due_count:
+            warnings.append(f"{unknown_due_count} action item(s) do not have a due date.")
+        return warnings
+
+    def repair_selected_meeting(self) -> None:
+        folder = self._selected_meeting_folder()
+        if folder is None:
+            QMessageBox.information(self, "Nova Notetaker", "Select a meeting to repair.")
+            return
+        self.repair_meeting(folder)
+
+    def repair_meeting(self, folder: Path) -> None:
+        if self.processing_thread is not None or self.batch_processing_thread is not None:
+            QMessageBox.information(self, "Nova Notetaker", "Nova is already processing meetings.")
+            return
+        try:
+            metadata = self.meeting_store.read_metadata(folder)
+        except Exception as error:
+            QMessageBox.warning(self, "Nova Notetaker", f"Could not read meeting metadata: {error}")
+            return
+
+        transcript_path = folder / "transcript.md"
+        notes_path = folder / "notes.md"
+        insights_path = folder / "insights.json"
+        if notes_path.exists():
+            insights = load_or_build_insights(folder)
+            write_insights_json(folder, insights)
+            metadata.status = "processed_with_warnings" if insights.quality_warnings else "processed"
+            metadata.processing = {
+                **(metadata.processing if isinstance(metadata.processing, dict) else {}),
+                "notes_path": str(notes_path),
+                "transcript_path": str(transcript_path),
+                "insights_path": str(insights_path),
+            }
+            self.meeting_store.write_metadata(folder, metadata)
+            self.refresh_meetings()
+            self.refresh_review_center()
+            self.archive_status.setText("Repair complete")
+            self.log(f"Rebuilt insights for repaired meeting: {folder.name}")
+            return
+
+        mode = "notes_only" if transcript_path.exists() else "full"
+        metadata.status = "processing"
+        self.meeting_store.write_metadata(folder, metadata)
+        self.meeting_folder = folder
+        self.metadata = metadata
+        for button_name in ("repair_meeting_button", "reprocess_button", "batch_reprocess_button", "rebuild_index_button"):
+            if hasattr(self, button_name):
+                getattr(self, button_name).setEnabled(False)
+        self.archive_status.setText("Repairing selected meeting...")
+        self.log(f"Repairing meeting with {mode} processing: {folder}")
+        self._start_processing(folder, metadata, mode=mode)
+
+    def rebuild_meeting_intelligence_index(self) -> None:
+        rebuilt = 0
+        failed = 0
+        for folder in self.meeting_store.list_meetings():
+            try:
+                load_or_build_insights(folder)
+                rebuilt += 1
+            except Exception as error:
+                failed += 1
+                self.log(f"Could not rebuild insights for {folder.name}: {error}")
+        try:
+            write_meeting_index(self.meeting_store)
+        except Exception as error:
+            failed += 1
+            self.log(f"Could not rebuild meeting index: {error}")
+        self.refresh_meetings()
+        self.refresh_review_center()
+        message = f"Rebuilt intelligence for {rebuilt} meeting(s)"
+        if failed:
+            message += f"; {failed} issue(s)"
+        self.archive_status.setText(message)
+        self.log(message)
 
     @staticmethod
     def _notes_for_display(notes_path: Path) -> str:
@@ -4619,7 +5145,8 @@ class MainWindow(QMainWindow):
         changed = False
         for speaker in speakers:
             current = aliases.get(speaker, speaker)
-            value, accepted = QInputDialog.getText(self, "Rename Speaker", f"{speaker}", text=current)
+            prompt = f"{speaker}\nLeave unchanged to keep the transcript label; clear to remove a saved alias."
+            value, accepted = QInputDialog.getText(self, "Rename Speaker", prompt, text=current)
             if not accepted:
                 continue
             value = value.strip()
@@ -4632,8 +5159,7 @@ class MainWindow(QMainWindow):
         if changed:
             write_speaker_aliases(folder, aliases)
             self.log(f"Updated speaker names for {folder.name}")
-            if self.overview_workspace_folder == folder:
-                self.open_meeting_workspace(folder)
+            QMessageBox.information(self, "Nova Notetaker", "Speaker names updated. Reopen the meeting overview to see the refreshed transcript labels.")
 
     @classmethod
     def _note_section_lines(cls, notes_path: Path, section_name: str) -> list[str]:
@@ -4812,8 +5338,12 @@ class MainWindow(QMainWindow):
         self.recording_button.setObjectName("DangerButton")
         self._refresh_widget_style(self.recording_button)
         self.reprocess_button.setEnabled(False)
+        if hasattr(self, "repair_meeting_button"):
+            self.repair_meeting_button.setEnabled(False)
         if hasattr(self, "batch_reprocess_button"):
             self.batch_reprocess_button.setEnabled(False)
+        if hasattr(self, "rebuild_index_button"):
+            self.rebuild_index_button.setEnabled(False)
         self.refresh_meetings_button.setEnabled(False)
         self.open_folder_button.setEnabled(False)
         self.export_html_button.setEnabled(False)
@@ -4869,7 +5399,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Nova Notetaker", "No selected meetings could be prepared for reprocess.")
             return
 
-        self._set_active_nav(4)
+        self._set_active_nav(5)
         self.archive_status.setText(f"Batch reprocessing {len(jobs)} meeting(s)...")
         self.reprocess_button.setEnabled(False)
         self.batch_reprocess_button.setEnabled(False)
@@ -4890,7 +5420,14 @@ class MainWindow(QMainWindow):
         self.batch_processing_thread = None
         if hasattr(self, "archive_status"):
             self.archive_status.setText("Batch reprocess complete")
-        for button_name in ("reprocess_button", "batch_reprocess_button", "refresh_meetings_button", "export_calendar_button"):
+        for button_name in (
+            "reprocess_button",
+            "repair_meeting_button",
+            "batch_reprocess_button",
+            "rebuild_index_button",
+            "refresh_meetings_button",
+            "export_calendar_button",
+        ):
             if hasattr(self, button_name):
                 getattr(self, button_name).setEnabled(True)
         self.refresh_meetings()
@@ -5147,11 +5684,13 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _meeting_status_label(status: str, review_count: int, has_transcript: bool = True) -> str:
-        if not has_transcript:
-            return "Missing transcript"
+        normalized = status.lower()
+        if "failed" in normalized:
+            return "Processing failed"
         if review_count:
             return "Needs review"
-        normalized = status.lower()
+        if not has_transcript:
+            return "Missing transcript"
         if normalized.startswith("processed"):
             return "Complete"
         if normalized in {"recording", "processing", "transcribing"}:

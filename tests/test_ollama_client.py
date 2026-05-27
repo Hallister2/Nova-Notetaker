@@ -33,3 +33,11 @@ class OllamaClientTests(TestCase):
         self.assertIn("## Action Items", prompt)
         self.assertIn("Plain summary text.", prompt)
         self.assertIn("Return only Markdown notes", prompt)
+
+    def test_prompt_guards_against_invented_action_fields(self) -> None:
+        prompt = OllamaClient._build_prompt("Chad, please verify the local recordings.")
+
+        self.assertIn("Do not invent facts", prompt)
+        self.assertIn("Keep confidence only in the Confidence field", prompt)
+        self.assertIn("Do not assign tasks to Nova", prompt)
+        self.assertIn("Mark uncertain owners or dates as Unknown", prompt)

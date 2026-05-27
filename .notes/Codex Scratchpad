@@ -1,6 +1,6 @@
 # Codex Scratchpad
 
-Last updated: 2026-05-26
+Last updated: 2026-05-27
 
 Purpose: This is the working handoff between Codex, Chad, ChatGPT, and any design/product thinking around Nova Notetaker. Keep this file current with project status, design choices, implementation decisions, known issues, and open questions.
 
@@ -18,7 +18,7 @@ Current core flow:
 - Write `notes.md`, `transcript.md`, `metadata.json`, and now `insights.json`.
 - Review saved meetings from the Meetings tab.
 - Review follow-up dates and action items from the Calendar workspace.
-- Open a selected meeting either in the in-app workspace or in a separate popout overview.
+- Open a selected meeting in the popout Meeting Overview.
 
 Current infrastructure assumptions:
 
@@ -105,6 +105,7 @@ Current UI structure:
 - Left sidebar navigation:
   - Live Capture
   - Meetings
+  - Review
   - Search
   - Calendar
   - Logs
@@ -126,14 +127,22 @@ Current UI structure:
 
 - Meetings page:
   - Clean table/index only.
-  - Date, time, meeting name, status, open action count, review count, Open popout action, and Workspace action.
+  - Date, time, meeting name, status, open action count, review count, and Open action.
   - Selected meetings can be deleted.
-  - Batch reprocess and exports are available for selected meetings.
+  - Repair selected, batch reprocess, rebuild index, and exports are available for selected meetings.
+  - Selected meetings can be pinned as important for the Review Queue.
   - Table styling has been normalized to avoid heavy selected-row bands, orange cell slivers, and focus artifacts.
+
+- Review page:
+  - Today/Review Queue command center for what needs attention next.
+  - Metric cards show needs attention, repair/failed, due soon, and pinned counts.
+  - Meeting queue surfaces pinned meetings, failed/missing-output meetings, review warnings, open actions, and recent meetings.
+  - Due/owner cleanup table surfaces due-soon or ownerless action items.
+  - Rows open the Meeting Overview; action rows include a quick Done command.
 
 - Search page:
   - Searches meeting titles, notes, transcripts, owners, and dates.
-  - Search results open meetings in the in-app workspace.
+  - Search results open meetings in the popout Meeting Overview.
 
 - Calendar page:
   - Dates tab reviews detected calendar candidates by meeting.
@@ -145,6 +154,7 @@ Current UI structure:
   - Export visible dates exports approved candidates only.
   - Actions tab lists cross-meeting action items with owner/status/confidence filters.
   - Action status can be updated directly from the table.
+  - Action owner, due date, confidence, status, and task text can be edited from the Actions workflow.
 
 - Templates page:
   - Split into two vertical sections:
@@ -172,10 +182,10 @@ Current UI structure:
   - Popout windows close when the main app closes.
   - Popouts are screen-aware and should stay inside the available display.
 
-- Meeting overview workspace:
-  - In-app workspace page exists in the main stack.
-  - Meetings can open into the workspace from Meetings, Search, Calendar/Actions, or Open latest.
-  - Workspace is now organized with the source meeting record first:
+- Meeting overview:
+  - Popout Meeting Overview is the primary review workflow.
+  - Meetings, Search, Calendar/Actions, and Open latest route to the same overview flow.
+  - Overview is organized with the source meeting record first:
     - Structured notes
     - Transcript evidence
     - Key decisions
@@ -184,6 +194,8 @@ Current UI structure:
     - Risks / review needed
     - Review controls/details rail
   - Action items are not duplicated in the right rail; the rail is for quality, markers, and details.
+  - Quality summary now includes a readiness score.
+  - Resolve Meeting checklist provides quick Repair, Export, Rename Speakers, and Pin controls.
   - Speaker aliases can be edited through Rename Speakers and are applied to transcript display without rewriting `transcript.md`.
 
 ## Theme System
@@ -294,12 +306,6 @@ Potential future insight improvements:
 
 ## Next Useful Implementation Ideas
 
-- Add a repair/backfill command for old or stuck meeting folders:
-  - rebuild `insights.json`
-  - rebuild `meetings/index.json`
-  - retry meetings left in `processing`
-  - surface missing `notes.md` / `transcript.md`
-- Add visible retry/repair UX for `processing_failed` meetings.
 - Remove unused legacy UI code from `main_window.py`.
 - Continue splitting `main_window.py` into page/component modules.
 - Add screenshot-based UI QA notes for Dark and Graphite Light.
@@ -327,13 +333,7 @@ Potential future insight improvements:
   - live transcript is working, but perceived latency is still mostly WhisperLive/server/model behavior
   - current UI now favors fewer, more stable transcript rows instead of many choppy fragments
   - watch for over-merged rows or missed partial updates in the next real meeting
-- Tighten the Ollama notes/insights prompt:
-  - avoid assigning actions to Nova unless Nova truly owns the work
-  - keep confidence as its own field instead of appending `(High)` to dates/due text
-  - reduce invented owners and due dates
-- Add visible processing-failure and retry UX in the Meetings table/workspace.
-- Add a repair/backfill utility for older meetings and any folders stuck in partial states.
-- Screenshot-review the revised Live Capture setup/transcript/insights layout and Meeting Workspace export flow at real Windows scaling.
+- Screenshot-review the revised Live Capture setup/transcript/insights layout and Meeting Overview export flow at real Windows scaling.
 - Continue decomposing `main_window.py`; `app/ui/review_helpers.py` and `app/ui/live_insights.py` are the first extractions.
 
 ## 2026-05-26 Update - Latest Reprocess Review
@@ -712,4 +712,68 @@ Remaining roadmap items:
 - Working tree note:
   - `config/settings.json` may show `selected_template_id = executive_summary`.
   - This appears to be Chad's active app preference, not generated test noise.
+
+## 2026-05-27 Update - Functional Workflow Pass
+
+- Meetings recovery/backfill:
+  - Added `Repair selected` on the Meetings page.
+    - If `notes.md` exists, Nova rebuilds `insights.json`, refreshes metadata paths, and updates meeting status.
+    - If notes are missing but a transcript exists, Nova starts notes-only processing.
+    - If transcript/notes are missing, Nova starts full processing.
+  - Added `Rebuild index` on the Meetings page to rebuild per-meeting insights and `meetings/index.json`.
+  - `processing_failed` now appears as `Processing failed` instead of being masked by missing-transcript status.
+
+- Action review workflow:
+  - Calendar > Actions now includes an `Edit` action.
+  - Meeting overview action cards also include `Edit`.
+  - Edit dialog supports owner, due date, confidence, status, and task text.
+  - Updating actions recalculates action-related review warnings and writes back to `insights.json`.
+
+- Extraction/prompt hardening:
+  - Ollama prompt now explicitly says not to invent owners/due dates.
+  - Prompt now keeps confidence only in the Confidence field.
+  - Prompt now blocks assigning tasks to Nova unless the transcript explicitly says Nova owns the task.
+  - Insights parser now strips trailing parenthetical confidence from owner/task fields and normalizes invalid owners such as Nova/System/Tool to Unknown.
+
+- Speaker rename polish:
+  - Rename Speakers dialog now explains that unchanged labels keep the transcript label and cleared entries remove aliases.
+  - Aliases remain per-meeting in `speaker_aliases.json` and are applied only to display/export surfaces, not raw `transcript.md`.
+
+- Meeting workflow simplification:
+  - The redundant Meetings table `Workspace` action was removed.
+  - `Open` is now the single meeting review path; row double-click also opens the overview.
+  - Search and Actions now route to the same popout Meeting Overview.
+
+- Verification:
+  - `py_compile` passed for changed files.
+  - Targeted insight/Ollama tests passed.
+  - Full test discovery passed: 38 tests OK.
+  - Offscreen UI smoke check passed at `1766x1004` with 8 stacked pages, 7 Meetings columns, and 8 Actions columns.
+
+## 2026-05-27 Update - Review Queue / Command Center Pass
+
+- Added a first-class Review sidebar page:
+  - Metric cards for needs attention, repair/failed, due soon, and pinned meetings.
+  - Meeting queue for pinned, failed/missing-output, warning-heavy, open-action, and recent meetings.
+  - Due/owner cleanup table for due-soon or ownerless action items.
+  - Queue rows open the popout Meeting Overview.
+  - Action rows include a quick Done command.
+
+- Added pinned/important meeting surfacing:
+  - Meetings page has `Pin important`.
+  - Live Capture `Mark Important` now refreshes the Review Queue.
+  - Important markers are still stored in per-meeting `markers.json`.
+
+- Added Meeting Overview streamlining:
+  - Quality summary now includes a readiness score.
+  - Resolve Meeting checklist shows transcript/notes/actions/warnings/pin readiness.
+  - Checklist includes quick Repair, Export, Rename Speakers, and Pin controls.
+
+- Added action quick commands:
+  - Calendar > Actions now includes a quick `Done` command in addition to status dropdown and Edit.
+  - Review Queue due/owner cleanup includes quick Done.
+
+- Verification:
+  - Full test discovery passed: 38 tests OK.
+  - Offscreen UI smoke check passed at `1766x1004` with 9 stacked pages, 8 nav buttons, 7 Review Queue meeting columns, and 9 Actions columns.
 

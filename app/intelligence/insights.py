@@ -162,13 +162,15 @@ def _parse_action(text: str) -> InsightItem:
     fields = _field_map(text)
     task = fields.get("task") or _strip_known_fields(text)
     due_date, inferred_confidence = _extract_trailing_confidence(fields.get("due", ""))
+    owner, owner_confidence = _extract_trailing_confidence(fields.get("owner", "Unknown"))
+    task, task_confidence = _extract_trailing_confidence(task)
     return InsightItem(
         kind="action",
         text=task,
-        owner=fields.get("owner", "Unknown"),
+        owner=_normalize_owner(owner),
         due_date=due_date,
         source=fields.get("source", ""),
-        confidence=_normalize_confidence(fields.get("confidence", "") or inferred_confidence),
+        confidence=_normalize_confidence(fields.get("confidence", "") or inferred_confidence or owner_confidence or task_confidence),
     )
 
 
@@ -239,6 +241,15 @@ def _normalize_confidence(value: str) -> str:
     if lowered in {"high", "medium", "low"}:
         return lowered.title()
     return value.strip()
+
+
+def _normalize_owner(value: str) -> str:
+    cleaned = value.strip()
+    if not cleaned:
+        return "Unknown"
+    if cleaned.lower() in {"nova", "nova notetaker", "system", "dashboard", "tool", "app"}:
+        return "Unknown"
+    return cleaned
 
 
 def _extract_trailing_confidence(value: str) -> tuple[str, str]:

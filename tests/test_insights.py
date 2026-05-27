@@ -102,6 +102,25 @@ class InsightsTests(TestCase):
             self.assertEqual(insights.dates[0].context, "next full operations review")
             self.assertEqual(insights.dates[0].confidence, "Medium")
 
+    def test_extracts_confidence_from_owner_or_task_without_polluting_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            notes_path = Path(temp_dir) / "notes.md"
+            notes_path.write_text(
+                "\n".join(
+                    [
+                        "## Action Items",
+                        "- Owner: Nova (Low); Task: Confirm the backup schedule (High); Due: Unknown",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            insights = build_insights_from_notes(notes_path)
+
+            self.assertEqual(insights.actions[0].owner, "Unknown")
+            self.assertEqual(insights.actions[0].text, "Confirm the backup schedule")
+            self.assertEqual(insights.actions[0].confidence, "Low")
+
     def test_rebuilds_when_notes_are_newer_than_insights_json(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             folder = Path(temp_dir)
