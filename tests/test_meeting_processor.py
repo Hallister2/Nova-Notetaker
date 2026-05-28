@@ -7,6 +7,7 @@ from pathlib import Path
 
 from app.audio.audio_validation import inspect_wav
 from app.storage.meeting_store import MeetingMetadata, MeetingStore
+from app.transcription.whisperlive_client import TranscriptionResult
 from app.workflows.meeting_processor import MeetingProcessor
 
 
@@ -130,6 +131,59 @@ class MeetingProcessorTests(unittest.TestCase):
 
         self.assertNotIn("Good morning. Good morning everyone.", cleaned)
         self.assertEqual(cleaned.count("The incident is resolved."), 1)
+
+    def test_format_transcript_for_notes_keeps_sources_separate(self) -> None:
+        transcript = MeetingProcessor._format_transcript_for_notes(
+            [
+                TranscriptionResult("You", "I will send the report Friday.", True),
+                TranscriptionResult("Meeting", "Please send the report Friday.", True),
+            ]
+        )
+
+        self.assertIn("## Microphone Audio", transcript)
+        self.assertIn("## Speaker Audio", transcript)
+        self.assertIn("overlapping phrases", transcript)
+        self.assertIn("I will send the report Friday.", transcript)
+        self.assertIn("Please send the report Friday.", transcript)
+
+    def test_previous_successful_chunks_reads_diagnostics(self) -> None:
+        metadata = MeetingMetadata(
+            title="Retry",
+            started_at="2026-05-25T09:00:00",
+            processing={
+                "diagnostics": {
+                    "transcription": {
+                        "Meeting": {
+                            "chunks": [
+                                {"index": 1, "status": "success", "text": "kept"},
+                                {"index": 2, "status": "failed", "text": ""},
+                                {"index": 3, "status": "reused", "text": "also kept"},
+                            ]
+                        }
+                    }
+                }
+            },
+        )
+
+        self.assertEqual(MeetingProcessor._previous_successful_chunks(metadata, "Meeting"), {1: "kept", 3: "also kept"})
+
+    def test_capture_quality_summary_labels_sources(self) -> None:
+        metadata = MeetingMetadata(
+            title="Quality",
+            started_at="2026-05-25T09:00:00",
+            capture_mic=False,
+            audio_files={
+                "system": {"valid": True, "duration_seconds": 60, "rms_level": 0.01},
+                "mic": {"valid": False, "duration_seconds": 0, "rms_level": 0},
+            },
+        )
+
+        summary = MeetingProcessor._capture_quality_summary(metadata, has_transcript=True, warning_count=2)
+
+        self.assertEqual(summary["system_audio"], "good")
+        self.assertEqual(summary["microphone_audio"], "muted")
+        self.assertEqual(summary["transcript"], "available")
+        self.assertEqual(summary["warning_count"], 2)
 
     @staticmethod
     def _write_silent_wav(path: Path) -> None:

@@ -1,6 +1,6 @@
 # Codex Scratchpad
 
-Last updated: 2026-05-27
+Last updated: 2026-05-28
 
 Purpose: This is the working handoff between Codex, Chad, ChatGPT, and any design/product thinking around Nova Notetaker. Keep this file current with project status, design choices, implementation decisions, known issues, and open questions.
 
@@ -306,6 +306,26 @@ Potential future insight improvements:
 
 ## Next Useful Implementation Ideas
 
+- Chad feature backlog added 2026-05-28:
+  - Import external recording as a new meeting.
+    - Add an Import button on the Meetings screen.
+    - Let the user choose an audio file such as an iPhone Voice Memo export.
+    - Ask for the same meeting setup/profile/template details as a normal capture.
+    - Create a new meeting folder, copy/convert the recording into the expected audio file shape, and process it.
+  - Background processing for back-to-back meetings.
+    - Let processing continue without blocking the next recording.
+    - Consider a processing queue, visible status, and safe "reprocess later" behavior.
+    - An interrupt/cancel button is useful, but less important than allowing the user to start the next meeting.
+  - Merge meetings.
+    - Add a merge meetings button for selected meetings.
+    - Merge transcripts.
+    - Rename/source-mark each original meeting with "-MERGED".
+    - Create a new merged meeting.
+    - Run full processing on the merged meeting.
+  - Orb/live state context improvements.
+    - During recording, change the orb context from ready to recording.
+    - During processing, change the orb context from ready to processing.
+    - Add more useful status context around what the orb represents.
 - Remove unused legacy UI code from `main_window.py`.
 - Continue splitting `main_window.py` into page/component modules.
 - Add screenshot-based UI QA notes for Dark and Graphite Light.
@@ -329,6 +349,11 @@ Potential future insight improvements:
 
 ## Current Next Recommendations
 
+- From Chad's feature backlog, recommended implementation order:
+  - First: import external recording as a new meeting, because it unlocks recovery for meetings recorded elsewhere and creates reusable file-ingest plumbing.
+  - Second: background processing queue, because back-to-back meetings are a real workflow blocker and this will also improve import and merge UX.
+  - Third: merge meetings, because it depends on reliable import/process orchestration and benefits from background processing.
+  - Quick win anytime: orb/live state context, because it is smaller and improves confidence while the larger workflow work is underway.
 - Continue real-meeting live capture QA:
   - live transcript is working, but perceived latency is still mostly WhisperLive/server/model behavior
   - current UI now favors fewer, more stable transcript rows instead of many choppy fragments

@@ -34,5 +34,14 @@
     "notes_focus": "Prioritize commitments, open questions, commercial risks, dates, and accountability.",
     "custom_instructions": "",
     "preferred_sections": "Summary, Key Decisions, Action Items, Important Dates, Risks / Blockers, Follow-ups"
+  },
+  {
+    "id": "technical_change_session",
+    "name": "Technical Change Session",
+    "category": "IT / Change",
+    "description": "Technical working-session report for infrastructure, policy, app, or workflow changes.",
+    "notes_focus": "Capture objective, current state, proposed change, affected systems, implementation notes, test plan, risks, decisions, action items, and open questions.",
+    "custom_instructions": "Use IT/change-management language. Do not turn noisy transcript fragments into owners. Only assign an owner when a person or team is clearly responsible. Treat acronyms, systems, policies, OUs, groups, products, and departments as affected items unless the transcript clearly says they own work. Include concrete test scenarios and technical gotchas even when they are not formal action items. For Action Items, include only explicit commitments, requests, or assigned work. If no clear owner is stated, use Unknown; if no explicit work item is stated, write '- None captured.' Do not convert risks, design notes, group names, or test observations into action items. Keep proposed changes separate from decisions unless the transcript clearly says the group decided, approved, agreed, or committed.",
+    "preferred_sections": "Purpose / Objective, Current State, Proposed Change, Affected Systems / Policies, Implementation Notes, Test Plan, Risks / Gotchas, Decisions, Action Items, Open Questions"
   }
 ]

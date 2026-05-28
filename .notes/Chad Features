@@ -1,0 +1,17 @@
+#FEATURES TO ADD
+-Make a merge meetings button. This will
+    -merge the transcripts
+    -Rename each meeting with a "-MERGED"
+    -Create the new merged meeting
+    -Do a full process on the new MERGED meeting
+-A feature that lets me drop in a recording, say from my iphone memo app, 
+ and have it process as a new meeting.
+    -This option can go probably best on the meetings screen with like an import button.
+    -The import would ask the same stuff as the Meeting setup but instead of Record will have a process button.
+
+
+#DESIGN THINGS TO FIX/Improve
+-IMPROVE? The Orb box needs to have more context.
+    -If recording change the ORB "ready" to recording
+    -If processingn change the ORB "ready" to processing
+-IMPROVE? So for longer meetings, processing takes forever. Is there a way to process in the background so we can start a new meeting if back-to-back meetings occur? Is it feasible to add an interrupt button where you can reprocess later? Which one seems more worh it?

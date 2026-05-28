@@ -18,6 +18,20 @@ class TemplateTests(TestCase):
 
             self.assertTrue(templates)
             self.assertEqual(templates[0].id, "standard")
+            self.assertTrue(any(template.id == "technical_change_session" for template in templates))
+
+    def test_template_store_appends_new_default_templates(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "templates.json"
+            path.write_text(
+                '[{"id": "standard", "name": "Standard Meeting Notes", "category": "General"}]',
+                encoding="utf-8",
+            )
+            store = TemplateStore(path)
+
+            templates = store.list_templates()
+
+            self.assertTrue(any(template.id == "technical_change_session" for template in templates))
 
     def test_template_store_round_trips_custom_template(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -55,3 +69,15 @@ class TemplateTests(TestCase):
 
         self.assertIn("Executive Brief", context)
         self.assertIn("Decisions and deadlines only.", context)
+
+    def test_meeting_context_is_used_in_prompt_context(self) -> None:
+        metadata = MeetingMetadata(
+            title="Context",
+            started_at="2026-05-25T12:00:00",
+            meeting_context="This is about OneDrive GPO and folder redirection testing.",
+        )
+
+        context = MeetingProcessor._profile_prompt_context(metadata)
+
+        self.assertIn("Meeting-specific context provided by user", context)
+        self.assertIn("OneDrive GPO", context)

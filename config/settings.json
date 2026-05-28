@@ -2,14 +2,14 @@
   "app": {
     "name": "Nova Notetaker",
     "theme": "executive_dark",
-    "selected_profile_id": "project_sync",
+    "selected_profile_id": "personal_review",
     "selected_template_id": "standard"
   },
   "audio": {
     "mic_device_name": "SteelSeries Sonar - Microphone (SteelSeries Sonar Virtual Audio Device)",
     "system_loopback_device_name": "SteelSeries Sonar - Chat (SteelSeries Sonar Virtual Audio Device) [Loopback]",
     "capture_mic": true,
-    "capture_profile": "laptop_speakers",
+    "capture_profile": "external_mic_speakers",
     "sample_rate": 16000,
     "channels": 1
   },

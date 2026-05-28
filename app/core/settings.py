@@ -39,6 +39,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "cross_bleed_cleanup": True,
         "timeout_seconds": 120,
         "long_audio_chunk_seconds": 180,
+        "websocket_chunk_delay_seconds": 0.005,
+        "post_audio_quiet_seconds": 5.0,
+        "post_audio_max_wait_seconds": 120,
     },
     "storage": {
         "meetings_dir": "meetings",

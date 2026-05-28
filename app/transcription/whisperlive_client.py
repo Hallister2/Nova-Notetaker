@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlparse
 from threading import Event, Thread
 import json
@@ -14,6 +14,8 @@ import wave
 import numpy as np
 import websocket
 
+from app.core.glossary import glossary_hotwords
+
 
 @dataclass
 class TranscriptionResult:
@@ -21,6 +23,7 @@ class TranscriptionResult:
     text: str
     success: bool
     warning: str | None = None
+    details: dict[str, Any] | None = None
 
 
 class WhisperLiveClient:
@@ -35,8 +38,27 @@ class WhisperLiveClient:
         self.language = str(transcription.get("language", "en"))
         self.use_vad = bool(transcription.get("use_vad", True))
         self.long_audio_chunk_seconds = int(transcription.get("long_audio_chunk_seconds", 180))
+        self.websocket_chunk_delay_seconds = max(
+            0.0,
+            float(transcription.get("websocket_chunk_delay_seconds", 0.005)),
+        )
+        self.post_audio_quiet_seconds = max(
+            1.0,
+            float(transcription.get("post_audio_quiet_seconds", 5.0)),
+        )
+        self.post_audio_max_wait_seconds = max(
+            5.0,
+            float(transcription.get("post_audio_max_wait_seconds", min(self.timeout_seconds, 120))),
+        )
+        self.hotwords = str(transcription.get("hotwords", "") or glossary_hotwords()).strip()
 
-    def transcribe_file(self, audio_path: Path, source: str) -> TranscriptionResult:
+    def transcribe_file(
+        self,
+        audio_path: Path,
+        source: str,
+        on_status: Callable[[str], None] | None = None,
+        previous_chunks: dict[int, str] | None = None,
+    ) -> TranscriptionResult:
         if not self.enabled:
             return TranscriptionResult(
                 source=source,
@@ -62,19 +84,41 @@ class WhisperLiveClient:
         try:
             duration_seconds = self._wav_duration_seconds(audio_path)
             if duration_seconds > self.long_audio_chunk_seconds:
-                text, chunk_warnings = self._transcribe_long_wav(audio_path, duration_seconds)
+                text, chunk_warnings, details = self._transcribe_long_wav(
+                    audio_path,
+                    duration_seconds,
+                    source,
+                    on_status=on_status,
+                    previous_chunks=previous_chunks,
+                )
             else:
+                if on_status:
+                    on_status(f"Transcribing {source} audio")
                 text = self._transcribe_wav_with_retries(audio_path)
                 chunk_warnings = []
+                details = {
+                    "source": source,
+                    "duration_seconds": round(duration_seconds, 3),
+                    "chunk_count": 1,
+                    "chunks": [
+                        {
+                            "index": 1,
+                            "status": "success" if text.strip() else "empty",
+                            "reused": False,
+                            "text_length": len(text.strip()),
+                        }
+                    ],
+                }
             if not text:
                 return TranscriptionResult(
                     source=source,
                     text="",
                     success=False,
                     warning=f"WhisperLive connected for {source}, but no speech text was returned.",
+                    details=details,
                 )
             warning = "; ".join(chunk_warnings) if chunk_warnings else None
-            return TranscriptionResult(source=source, text=text, success=True, warning=warning)
+            return TranscriptionResult(source=source, text=text, success=True, warning=warning, details=details)
         except Exception as error:
             return TranscriptionResult(
                 source=source,
@@ -83,25 +127,92 @@ class WhisperLiveClient:
                 warning=f"WhisperLive transcription failed for {source}: {error}",
             )
 
-    def _transcribe_long_wav(self, audio_path: Path, duration_seconds: float) -> tuple[str, list[str]]:
+    def _transcribe_long_wav(
+        self,
+        audio_path: Path,
+        duration_seconds: float,
+        source: str,
+        on_status: Callable[[str], None] | None = None,
+        previous_chunks: dict[int, str] | None = None,
+    ) -> tuple[str, list[str], dict[str, Any]]:
         texts: list[str] = []
         warnings: list[str] = []
+        chunk_details: list[dict[str, Any]] = []
+        previous_chunks = previous_chunks or {}
         with tempfile.TemporaryDirectory(prefix="nova_whisper_chunks_") as temp_dir:
             chunk_paths = self._split_wav(audio_path, Path(temp_dir), self.long_audio_chunk_seconds)
             for index, chunk_path in enumerate(chunk_paths, start=1):
+                if previous_chunks.get(index, "").strip():
+                    text = previous_chunks[index].strip()
+                    texts.append(text)
+                    chunk_details.append(
+                        {
+                            "index": index,
+                            "status": "reused",
+                            "reused": True,
+                            "text": text,
+                            "text_length": len(text),
+                        }
+                    )
+                    if on_status:
+                        on_status(f"Reusing {source} chunk {index}/{len(chunk_paths)}")
+                    continue
+
                 try:
+                    if on_status:
+                        on_status(f"Transcribing {source} chunk {index}/{len(chunk_paths)}")
                     text = self._transcribe_wav_with_retries(chunk_path)
                     if text.strip():
-                        texts.append(text.strip())
+                        cleaned_text = text.strip()
+                        texts.append(cleaned_text)
+                        chunk_details.append(
+                            {
+                                "index": index,
+                                "status": "success",
+                                "reused": False,
+                                "text": cleaned_text,
+                                "text_length": len(cleaned_text),
+                            }
+                        )
                     else:
                         warnings.append(f"WhisperLive returned no text for chunk {index}/{len(chunk_paths)}.")
+                        chunk_details.append(
+                            {
+                                "index": index,
+                                "status": "empty",
+                                "reused": False,
+                                "text": "",
+                                "text_length": 0,
+                            }
+                        )
                 except Exception as error:
                     warnings.append(f"WhisperLive failed for chunk {index}/{len(chunk_paths)}: {error}")
+                    chunk_details.append(
+                        {
+                            "index": index,
+                            "status": "failed",
+                            "reused": False,
+                            "text": "",
+                            "text_length": 0,
+                            "error": str(error),
+                        }
+                    )
         if not texts and warnings:
             raise RuntimeError("; ".join(warnings))
         if duration_seconds:
             warnings.insert(0, f"Long recording transcribed in {len(chunk_paths)} chunk(s).")
-        return " ".join(texts).strip(), warnings
+        details = {
+            "source": source,
+            "duration_seconds": round(duration_seconds, 3),
+            "chunk_seconds": self.long_audio_chunk_seconds,
+            "chunk_count": len(chunk_paths),
+            "successful_chunks": sum(1 for chunk in chunk_details if chunk.get("status") in {"success", "reused"}),
+            "failed_chunks": sum(1 for chunk in chunk_details if chunk.get("status") == "failed"),
+            "empty_chunks": sum(1 for chunk in chunk_details if chunk.get("status") == "empty"),
+            "reused_chunks": sum(1 for chunk in chunk_details if chunk.get("reused")),
+            "chunks": chunk_details,
+        }
+        return " ".join(texts).strip(), warnings, details
 
     def _transcribe_wav_with_retries(self, audio_path: Path) -> str:
         attempts = 2
@@ -155,8 +266,10 @@ class WhisperLiveClient:
         client_uid = str(uuid.uuid4())
         ready = Event()
         done = Event()
+        received_text = Event()
         warnings: list[str] = []
         segments_by_key: dict[tuple[str, str, str], str] = {}
+        last_activity = [time.monotonic()]
 
         ws = websocket.create_connection(ws_url, timeout=self.timeout_seconds)
         try:
@@ -172,7 +285,7 @@ class WhisperLiveClient:
                 "same_output_threshold": 10,
                 "enable_translation": False,
                 "target_language": "en",
-                "hotwords": None,
+                "hotwords": self.hotwords or None,
                 "enable_diarization": False,
                 "max_speakers": 10,
                 "word_timestamps": False,
@@ -180,7 +293,7 @@ class WhisperLiveClient:
 
             receiver = Thread(
                 target=self._receive_messages,
-                args=(ws, client_uid, ready, done, segments_by_key, warnings),
+                args=(ws, client_uid, ready, done, received_text, segments_by_key, warnings, last_activity),
                 daemon=True,
             )
             receiver.start()
@@ -190,10 +303,10 @@ class WhisperLiveClient:
 
             for audio_chunk, duration_seconds in self._iter_wav_float32_chunks(audio_path):
                 ws.send_binary(audio_chunk.tobytes())
-                time.sleep(duration_seconds)
+                self._sleep_between_file_chunks(duration_seconds)
 
             ws.send("END_OF_AUDIO")
-            done.wait(timeout=15)
+            self._wait_for_post_audio_messages(done, received_text, last_activity)
             receiver.join(timeout=2)
         finally:
             ws.close()
@@ -203,14 +316,33 @@ class WhisperLiveClient:
 
         return " ".join(text.strip() for text in segments_by_key.values() if text.strip()).strip()
 
+    def _sleep_between_file_chunks(self, duration_seconds: float) -> None:
+        if self.websocket_chunk_delay_seconds <= 0:
+            return
+        time.sleep(min(duration_seconds, self.websocket_chunk_delay_seconds))
+
+    def _wait_for_post_audio_messages(
+        self,
+        done: Event,
+        received_text: Event,
+        last_activity: list[float],
+    ) -> None:
+        deadline = time.monotonic() + self.post_audio_max_wait_seconds
+        while not done.is_set() and time.monotonic() < deadline:
+            if received_text.is_set() and time.monotonic() - last_activity[0] >= self.post_audio_quiet_seconds:
+                return
+            time.sleep(0.1)
+
     @staticmethod
     def _receive_messages(
         ws: websocket.WebSocket,
         client_uid: str,
         ready: Event,
         done: Event,
+        received_text: Event,
         segments_by_key: dict[tuple[str, str, str], str],
         warnings: list[str],
+        last_activity: list[float],
     ) -> None:
         while not done.is_set():
             try:
@@ -232,16 +364,20 @@ class WhisperLiveClient:
 
             if message.get("message") == "SERVER_READY":
                 ready.set()
+                last_activity[0] = time.monotonic()
                 continue
             if message.get("message") == "DISCONNECT":
                 done.set()
+                last_activity[0] = time.monotonic()
                 continue
             if message.get("status") == "ERROR":
                 warnings.append(str(message.get("message", "WhisperLive server error")))
                 done.set()
+                last_activity[0] = time.monotonic()
                 continue
             if message.get("status") == "WARNING":
                 warnings.append(str(message.get("message", "WhisperLive server warning")))
+                last_activity[0] = time.monotonic()
                 continue
 
             for segment in message.get("segments", []):
@@ -254,6 +390,8 @@ class WhisperLiveClient:
                     text,
                 )
                 segments_by_key[key] = text
+                received_text.set()
+                last_activity[0] = time.monotonic()
 
     @staticmethod
     def _iter_wav_float32_chunks(audio_path: Path, target_rate: int = 16000, chunk_size: int = 4096):

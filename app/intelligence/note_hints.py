@@ -10,6 +10,15 @@ ACTION_PATTERNS = (
     r"\b(?P<task>[^.]*needs an owner[^.]*)",
 )
 
+ACTION_TASK_STOP_PREFIXES = (
+    "say ",
+    "says ",
+    "said ",
+    "okay ",
+    "not mirror ",
+    "does a match",
+)
+
 DATE_PATTERN = re.compile(
     r"\b("
     r"next\s+(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)|"
@@ -45,7 +54,7 @@ def _extract_actions(text: str) -> list[str]:
         for match in re.finditer(pattern, text, flags=re.IGNORECASE):
             owner = match.groupdict().get("owner") or "Unknown"
             task = _clean_fragment(match.groupdict().get("task", ""))
-            if not task:
+            if not task or _looks_like_noisy_action(task):
                 continue
             action = f"Owner: {owner}; Task: {task}"
             key = action.lower()
@@ -76,3 +85,12 @@ def _strip_markdown_structure(text: str) -> str:
 def _clean_fragment(text: str) -> str:
     text = re.sub(r"\s+", " ", text).strip(" -;,.")
     return text[:180]
+
+
+def _looks_like_noisy_action(task: str) -> bool:
+    normalized = task.lower().strip()
+    normalized = re.sub(r"[^a-z0-9\s]", " ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    if len(normalized.split()) < 3:
+        return True
+    return any(normalized.startswith(prefix) for prefix in ACTION_TASK_STOP_PREFIXES)

@@ -53,6 +53,7 @@ from PySide6.QtWidgets import (
 
 from app.audio.capture_service import CaptureConfig, CaptureService
 from app.audio.device_manager import AudioDevice, AudioDeviceManager
+from app.core.glossary import glossary_hotwords
 from app.core.profiles import MeetingProfile, ProfileStore
 from app.core.settings import APP_ROOT, load_settings, save_settings
 from app.core.templates import NoteTemplate, TemplateStore
@@ -359,6 +360,7 @@ class LiveTranscriptionWorker(QObject):
         self.language = str(transcription.get("language", "en"))
         self.use_vad = bool(transcription.get("use_vad", True))
         self.timeout_seconds = int(transcription.get("timeout_seconds", 120))
+        self.hotwords = str(transcription.get("hotwords", "") or glossary_hotwords()).strip()
         self.client_uid = str(uuid.uuid4())
         self.audio_queue: queue.Queue[tuple[bytes, int, int] | None] = queue.Queue(maxsize=80)
         self.stop_requested = False
@@ -452,7 +454,7 @@ class LiveTranscriptionWorker(QObject):
                     "same_output_threshold": 4,
                     "enable_translation": False,
                     "target_language": "en",
-                    "hotwords": None,
+                    "hotwords": self.hotwords or None,
                     "enable_diarization": False,
                     "max_speakers": 10,
                     "word_timestamps": False,
@@ -750,7 +752,13 @@ class MainWindow(QMainWindow):
         self.sidebar_ready_label = QLabel("Ready")
         self.sidebar_ready_label.setObjectName("GreenText")
         status_layout.addWidget(self.sidebar_ready_label)
-        status_layout.addWidget(self._muted_label("All systems operational"))
+        self.sidebar_status_detail_label = self._muted_label("All systems operational")
+        status_layout.addWidget(self.sidebar_status_detail_label)
+        self.sidebar_processing_progress = QProgressBar()
+        self.sidebar_processing_progress.setRange(0, 0)
+        self.sidebar_processing_progress.setTextVisible(False)
+        self.sidebar_processing_progress.setVisible(False)
+        status_layout.addWidget(self.sidebar_processing_progress)
         mini_orb = OrbWidget()
         mini_orb.setFixedSize(118, 118)
         self.orb = mini_orb
@@ -1221,7 +1229,7 @@ class MainWindow(QMainWindow):
         filters = QHBoxLayout()
         filters.setSpacing(10)
         self.meeting_filter_combo = QComboBox()
-        self.meeting_filter_combo.addItems(["All meetings", "Needs review", "Has open actions", "Complete", "Missing transcript"])
+        self.meeting_filter_combo.addItems(["All meetings", "Needs repair", "Needs review", "Has open actions", "Complete", "Missing transcript"])
         self.meeting_filter_combo.currentIndexChanged.connect(self.refresh_meetings)
         self.meeting_filter_combo.setMinimumHeight(38)
         self.meeting_filter_combo.setMinimumWidth(190)
@@ -1235,7 +1243,7 @@ class MainWindow(QMainWindow):
         self.refresh_meetings_button.clicked.connect(self.refresh_meetings)
         self.reprocess_button = QPushButton("Reprocess")
         self.reprocess_button.clicked.connect(self.reprocess_selected_meeting)
-        self.repair_meeting_button = QPushButton("Repair selected")
+        self.repair_meeting_button = QPushButton("Retry / repair")
         self.repair_meeting_button.clicked.connect(self.repair_selected_meeting)
         self.batch_reprocess_button = QPushButton("Batch reprocess")
         self.batch_reprocess_button.clicked.connect(self.batch_reprocess_selected_meetings)
@@ -3094,10 +3102,29 @@ class MainWindow(QMainWindow):
             self.elapsed_label.setText(text)
         if hasattr(self, "live_elapsed_label"):
             self.live_elapsed_label.setText(text)
+        if hasattr(self, "sidebar_status_detail_label") and self.timer_phase == "recording":
+            self.sidebar_status_detail_label.setText(text)
 
     def _set_live_capture_state(self, text: str) -> None:
         if hasattr(self, "live_state_label"):
             self.live_state_label.setText(text)
+
+    def _set_sidebar_status(self, state: str, detail: str, processing: bool = False) -> None:
+        if hasattr(self, "sidebar_ready_label"):
+            self.sidebar_ready_label.setText(state)
+            if state.lower() == "recording":
+                self.sidebar_ready_label.setObjectName("RedText")
+            elif state.lower() == "processing":
+                self.sidebar_ready_label.setObjectName("BlueText")
+            elif state.lower() == "ready":
+                self.sidebar_ready_label.setObjectName("GreenText")
+            else:
+                self.sidebar_ready_label.setObjectName("OrangeText")
+            self._refresh_widget_style(self.sidebar_ready_label)
+        if hasattr(self, "sidebar_status_detail_label"):
+            self.sidebar_status_detail_label.setText(detail)
+        if hasattr(self, "sidebar_processing_progress"):
+            self.sidebar_processing_progress.setVisible(processing)
 
     @staticmethod
     def _refresh_widget_style(widget: QWidget) -> None:
@@ -3405,6 +3432,7 @@ class MainWindow(QMainWindow):
         self.elapsed_timer.start(1000)
         self._update_elapsed_timer()
         self.orb.set_state("recording")
+        self._set_sidebar_status("Recording", "00:00:00")
         self.status_label.setObjectName("RedText")
         self.status_label.setText("Recording")
         self._set_live_capture_state("Recording")
@@ -3496,6 +3524,7 @@ class MainWindow(QMainWindow):
         self.recording_button.setText("Stopping...")
         self.status_label.setText("Stopping")
         self._set_live_capture_state("Stopping")
+        self._set_sidebar_status("Finalizing", "Closing audio streams")
         self.orb_caption.setText("Finalizing capture")
         self.workflow_step_label.setText("Finalizing")
         self._stop_live_transcription()
@@ -3524,6 +3553,7 @@ class MainWindow(QMainWindow):
         self.mark_important_button.setEnabled(False)
         self.add_note_button.setEnabled(False)
         self.orb.set_state("processing")
+        self._set_sidebar_status("Processing", "Preparing transcript", processing=True)
         self.status_label.setText("Processing")
         self._set_live_capture_state("Processing")
         self.orb_caption.setText("Processing time")
@@ -3765,12 +3795,29 @@ class MainWindow(QMainWindow):
         self.processing_worker = ProcessingWorker(folder, metadata, mode=mode)
         self.processing_worker.moveToThread(self.processing_thread)
         self.processing_thread.started.connect(self.processing_worker.process)
-        self.processing_worker.status.connect(self.log)
+        self.processing_worker.status.connect(self._processing_status)
         self.processing_worker.finished.connect(self.processing_thread.quit)
         self.processing_worker.finished.connect(self.processing_worker.deleteLater)
         self.processing_thread.finished.connect(self._processing_finished)
         self.processing_thread.finished.connect(self.processing_thread.deleteLater)
         self.processing_thread.start()
+
+    def _processing_status(self, message: str) -> None:
+        self.log(message)
+        if hasattr(self, "archive_status"):
+            self.archive_status.setText(message)
+        if hasattr(self, "status_detail_label") and self.timer_phase == "processing":
+            self.status_detail_label.setText(message)
+        if hasattr(self, "sidebar_status_detail_label") and self.timer_phase == "processing":
+            self.sidebar_status_detail_label.setText(message)
+        if hasattr(self, "workflow_step_label") and self.timer_phase == "processing":
+            lowered = message.lower()
+            if "chunk" in lowered:
+                self.workflow_step_label.setText("Transcribing")
+            elif "notes" in lowered or "ollama" in lowered:
+                self.workflow_step_label.setText("Notes")
+            elif "insights" in lowered:
+                self.workflow_step_label.setText("Insights")
 
     def _processing_finished(self) -> None:
         processing_seconds = 0
@@ -3807,6 +3854,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "export_calendar_button"):
             self.export_calendar_button.setEnabled(True)
         self.orb.set_state("idle")
+        self._set_sidebar_status("Ready", "All systems operational")
         self.status_label.setObjectName("GreenText")
         self.status_label.setText("Ready")
         self._set_live_capture_state("Ready")
@@ -3846,7 +3894,8 @@ class MainWindow(QMainWindow):
                 date_text, time_text, title, status = "", "", folder.name, "unknown"
 
             open_actions = sum(1 for item in insights.actions if item.status.lower() not in CLOSED_ACTION_STATUSES)
-            review_count = len(insights.quality_warnings) + len(insights.warnings)
+            processing_warnings = metadata.processing.get("warnings", []) if metadata and isinstance(metadata.processing, dict) else []
+            review_count = len(insights.quality_warnings) + len(insights.warnings) + len(processing_warnings)
             if not self._meeting_matches_filter(folder, metadata, status, open_actions, review_count):
                 continue
 
@@ -3927,6 +3976,8 @@ class MainWindow(QMainWindow):
         review_count: int,
     ) -> bool:
         selected_filter = self.meeting_filter_combo.currentText() if hasattr(self, "meeting_filter_combo") else "All meetings"
+        if selected_filter == "Needs repair":
+            return self._meeting_needs_repair(folder, metadata)
         if selected_filter == "Needs review":
             return review_count > 0
         if selected_filter == "Has open actions":
@@ -3940,6 +3991,21 @@ class MainWindow(QMainWindow):
             transcript_text = transcript_path.read_text(encoding="utf-8", errors="ignore")
             return not MeetingProcessor._usable_existing_transcript_text(transcript_text).strip()
         return True
+
+    def _meeting_needs_repair(self, folder: Path, metadata: MeetingMetadata | None = None) -> bool:
+        if metadata and "failed" in metadata.status.lower():
+            return True
+        if metadata and metadata.status.lower() in {"processing", "transcribing"}:
+            return True
+        if not self._meeting_has_transcript(folder):
+            return True
+        if not (folder / "notes.md").exists():
+            return True
+        if metadata and isinstance(metadata.processing, dict):
+            warnings = metadata.processing.get("warnings", [])
+            if any("failed for chunk" in str(warning).lower() for warning in warnings if warning):
+                return True
+        return False
 
     def preview_selected_meeting(self) -> None:
         self.update_meeting_health()
@@ -4618,10 +4684,9 @@ class MainWindow(QMainWindow):
         details_layout.addWidget(self._section_label("Meeting intelligence"))
 
         insights = load_or_build_insights(folder)
-        details_layout.addWidget(self._overview_quality_card(folder, metadata, insights))
-        details_layout.addWidget(self._overview_resolve_checklist_card(folder, metadata, insights, dialog))
-        details_layout.addWidget(self._overview_markers_card(folder))
         details_layout.addWidget(self._overview_action_items_card(folder, insights))
+        details_layout.addWidget(self._overview_context_card(folder, metadata))
+        details_layout.addWidget(self._overview_markers_card(folder))
         for title_text, items in (
             ("Key decisions", insights.decisions),
             ("Scheduling details", insights.dates),
@@ -4639,6 +4704,9 @@ class MainWindow(QMainWindow):
                 warning_layout.addWidget(self._muted_label(f"- {warning}"))
             details_layout.addWidget(warning_card)
 
+        details_layout.addWidget(self._section_label("Meeting health"))
+        details_layout.addWidget(self._overview_quality_card(folder, metadata, insights))
+        details_layout.addWidget(self._overview_resolve_checklist_card(folder, metadata, insights, dialog))
         details_layout.addWidget(self._section_label("Meeting details"))
         health = QTextEdit()
         health.setReadOnly(True)
@@ -4787,10 +4855,13 @@ class MainWindow(QMainWindow):
         intelligence_layout = QVBoxLayout(intelligence_panel)
         intelligence_layout.setContentsMargins(16, 16, 16, 16)
         intelligence_layout.setSpacing(12)
-        intelligence_layout.addWidget(self._section_label("Review controls"))
+        intelligence_layout.addWidget(self._section_label("Action center"))
+        intelligence_layout.addWidget(self._overview_action_items_card(folder, insights))
+        intelligence_layout.addWidget(self._overview_context_card(folder, metadata))
+        intelligence_layout.addWidget(self._overview_markers_card(folder))
+        intelligence_layout.addWidget(self._section_label("Meeting health"))
         intelligence_layout.addWidget(self._overview_quality_card(folder, metadata, insights))
         intelligence_layout.addWidget(self._overview_resolve_checklist_card(folder, metadata, insights))
-        intelligence_layout.addWidget(self._overview_markers_card(folder))
         details = QTextEdit()
         details.setReadOnly(True)
         details.setMaximumHeight(150)
@@ -4844,6 +4915,36 @@ class MainWindow(QMainWindow):
         count_label = QLabel(str(len(items)))
         card, _items_layout = self._insight_card(title, count_label, items or [empty_text])
         return card
+
+    def _overview_context_card(self, folder: Path, metadata: MeetingMetadata) -> QFrame:
+        card = QFrame()
+        card.setObjectName("RaisedPanel")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(8)
+        layout.addWidget(self._section_label("Meeting context"))
+        context_edit = QTextEdit()
+        context_edit.setPlaceholderText("Add context for reprocessing, such as meeting purpose, systems discussed, known terminology, or what Nova should infer carefully.")
+        context_edit.setPlainText(str(getattr(metadata, "meeting_context", "") or ""))
+        context_edit.setMaximumHeight(120)
+        layout.addWidget(context_edit)
+        save_button = QPushButton("Save context")
+        save_button.setObjectName("SubtleActionButton")
+        save_button.clicked.connect(lambda checked=False, meeting_folder=folder, editor=context_edit: self._save_meeting_context(meeting_folder, editor.toPlainText()))
+        layout.addWidget(save_button)
+        layout.addWidget(self._muted_label("Saved context is included the next time notes are reprocessed."))
+        return card
+
+    def _save_meeting_context(self, folder: Path, context: str) -> None:
+        try:
+            metadata = self.meeting_store.read_metadata(folder)
+            metadata.meeting_context = context.strip()
+            self.meeting_store.write_metadata(folder, metadata)
+            self.log(f"Saved meeting context: {folder.name}")
+            if hasattr(self, "archive_status"):
+                self.archive_status.setText("Meeting context saved")
+        except Exception as error:
+            QMessageBox.warning(self, "Nova Notetaker", f"Could not save meeting context: {error}")
 
     def open_latest_meeting(self) -> None:
         meetings = self.meeting_store.list_meetings()
@@ -4922,15 +5023,29 @@ class MainWindow(QMainWindow):
         system_audio = metadata.audio_files.get("system", {}) if isinstance(metadata.audio_files, dict) else {}
         mic_audio = metadata.audio_files.get("mic", {}) if isinstance(metadata.audio_files, dict) else {}
         duration = max(float(system_audio.get("duration_seconds") or 0), float(mic_audio.get("duration_seconds") or 0))
-        warnings = metadata.processing.get("warnings", []) if isinstance(metadata.processing, dict) else []
+        processing = metadata.processing if isinstance(metadata.processing, dict) else {}
+        warnings = processing.get("warnings", [])
+        diagnostics = processing.get("diagnostics", {}) if isinstance(processing.get("diagnostics", {}), dict) else {}
+        transcription = diagnostics.get("transcription", {}) if isinstance(diagnostics.get("transcription", {}), dict) else {}
+        capture_quality = diagnostics.get("capture_quality", {}) if isinstance(diagnostics.get("capture_quality", {}), dict) else {}
         readiness_score, readiness_lines = self._meeting_readiness_score(folder, metadata, insights)
         summary = [
             f"Readiness: {readiness_score}%",
             f"Recording: {self._format_duration(duration)}" if duration else "Recording: unknown",
+            f"System audio: {capture_quality.get('system_audio') or self._audio_quality_label(system_audio)}",
+            f"Microphone: {capture_quality.get('microphone_audio') or ('muted' if not metadata.capture_mic else self._audio_quality_label(mic_audio))}",
             f"Transcript: {'available' if transcript_ok else 'missing'}",
             f"Open actions: {sum(1 for item in insights.actions if item.status.lower() not in CLOSED_ACTION_STATUSES)}",
             f"Review warnings: {len(insights.quality_warnings) + len(warnings)}",
         ]
+        if diagnostics.get("transcription_seconds"):
+            summary.append(f"Transcription time: {self._format_duration(float(diagnostics.get('transcription_seconds') or 0))}")
+        for source, details in transcription.items():
+            if not isinstance(details, dict) or not details.get("chunk_count"):
+                continue
+            summary.append(
+                f"{source} chunks: {details.get('successful_chunks', 0)}/{details.get('chunk_count')} ok"
+            )
         for line in summary:
             label = QLabel(line)
             label.setWordWrap(True)
@@ -4938,6 +5053,18 @@ class MainWindow(QMainWindow):
         for line in readiness_lines[:3]:
             layout.addWidget(self._muted_label(f"- {line}"))
         return card
+
+    @staticmethod
+    def _audio_quality_label(audio_info: dict) -> str:
+        if not audio_info:
+            return "missing"
+        if not audio_info.get("valid"):
+            return "invalid"
+        duration = float(audio_info.get("duration_seconds") or 0)
+        rms_level = float(audio_info.get("rms_level") or 0)
+        if duration >= 10 and rms_level < 0.001:
+            return "quiet"
+        return "good"
 
     def _overview_resolve_checklist_card(
         self,
@@ -5139,7 +5266,14 @@ class MainWindow(QMainWindow):
         transcript_path = folder / "transcript.md"
         notes_path = folder / "notes.md"
         insights_path = folder / "insights.json"
-        if notes_path.exists():
+        has_transcript = self._meeting_has_transcript(folder)
+        needs_full_retry = not has_transcript or "failed" in metadata.status.lower()
+        if isinstance(metadata.processing, dict):
+            warnings = metadata.processing.get("warnings", [])
+            if any("failed for chunk" in str(warning).lower() for warning in warnings if warning):
+                needs_full_retry = True
+
+        if notes_path.exists() and has_transcript and not needs_full_retry:
             insights = load_or_build_insights(folder)
             write_insights_json(folder, insights)
             metadata.status = "processed_with_warnings" if insights.quality_warnings else "processed"
@@ -5156,7 +5290,7 @@ class MainWindow(QMainWindow):
             self.log(f"Rebuilt insights for repaired meeting: {folder.name}")
             return
 
-        mode = "notes_only" if transcript_path.exists() else "full"
+        mode = "full" if needs_full_retry else "notes_only"
         metadata.status = "processing"
         self.meeting_store.write_metadata(folder, metadata)
         self.meeting_folder = folder
@@ -5761,10 +5895,10 @@ class MainWindow(QMainWindow):
         normalized = status.lower()
         if "failed" in normalized:
             return "Processing failed"
-        if review_count:
-            return "Needs review"
         if not has_transcript:
             return "Missing transcript"
+        if review_count:
+            return "Needs review"
         if normalized.startswith("processed"):
             return "Complete"
         if normalized in {"recording", "processing", "transcribing"}:
@@ -5840,6 +5974,27 @@ class MainWindow(QMainWindow):
             lines.append(f"Warnings: {len(warnings)}")
         else:
             lines.append("Warnings: none")
+
+        diagnostics = metadata.processing.get("diagnostics", {}) if isinstance(metadata.processing, dict) else {}
+        if isinstance(diagnostics, dict) and diagnostics:
+            processing_seconds = diagnostics.get("processing_seconds")
+            transcription_seconds = diagnostics.get("transcription_seconds")
+            notes_seconds = diagnostics.get("notes_seconds")
+            if processing_seconds:
+                lines.append(f"Processing time: {self._format_duration(float(processing_seconds))}")
+            if transcription_seconds:
+                lines.append(f"Transcription time: {self._format_duration(float(transcription_seconds))}")
+            if notes_seconds:
+                lines.append(f"Notes time: {self._format_duration(float(notes_seconds))}")
+            transcription = diagnostics.get("transcription", {})
+            if isinstance(transcription, dict):
+                for source, details in transcription.items():
+                    if not isinstance(details, dict) or not details.get("chunk_count"):
+                        continue
+                    lines.append(
+                        f"{source} chunks: {details.get('successful_chunks', 0)}/{details.get('chunk_count')} ok, "
+                        f"{details.get('failed_chunks', 0)} failed, {details.get('reused_chunks', 0)} reused"
+                    )
 
         return "\n".join(lines)
 
