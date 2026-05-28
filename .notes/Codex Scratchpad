@@ -88,6 +88,28 @@ Current infrastructure assumptions:
   - Notes-only reprocess now ignores pending sections and processing warnings, then uses any real transcript text that remains.
   - This prevents valid meeting-audio transcripts from being replaced by the "pending transcription" notes stub.
 
+- Long-meeting processing was hardened.
+  - File transcription no longer waits in real time between audio chunks.
+  - WhisperLive chunk retries keep successful partial transcript chunks where possible.
+  - Processing diagnostics now record chunk details, failed chunks, transcript timing, notes timing, and capture quality.
+  - Retry / repair can reuse previously successful chunks and focus on missing or failed chunks.
+
+- Speaker and microphone transcripts are kept source-separated for notes generation.
+  - Saved `transcript.md` keeps separate source sections.
+  - The notes prompt receives Speaker Audio and Microphone Audio separately.
+  - This should help the AI collapse duplicate phrases caused by mic/speaker bleed instead of treating them as separate facts.
+
+- Technical Change Session template and IT glossary are implemented.
+  - The template is designed for infrastructure/GPO/change-planning meetings.
+  - Glossary terms live in `config/glossary.json`.
+  - Glossary hotwords are sent to WhisperLive where supported.
+  - Ollama receives glossary context and correction hints for common mishears such as ADS/API, GPO/GBO, OneDrive, Folder Redirection, OU, UMI Documents, and related terms.
+
+- Meeting context metadata is implemented.
+  - Meeting Overview has an editable Meeting context box.
+  - Context is saved in meeting metadata.
+  - Future notes-only or full reprocess passes include this context in the AI prompt.
+
 ## UI / Design Direction
 
 The current design direction is a corporate dark executive dashboard, not a sci-fi HUD.
@@ -197,6 +219,15 @@ Current UI structure:
   - Quality summary now includes a readiness score.
   - Resolve Meeting checklist provides quick Repair, Export, Rename Speakers, and Pin controls.
   - Speaker aliases can be edited through Rename Speakers and are applied to transcript display without rewriting `transcript.md`.
+  - The side panel now leads with Action Items.
+  - Meeting context and markers follow Action Items.
+  - Meeting health, Quality Summary, and Resolve Meeting remain available but are visually secondary.
+
+- Nova orb / status card:
+  - Status now reflects Ready, Recording, Finalizing, and Processing.
+  - During recording, the subtext shows the recording timer.
+  - During processing, the card shows current progress text and a progress bar.
+  - Generic readiness copy should not remain visible while active work is happening.
 
 ## Theme System
 
@@ -322,10 +353,8 @@ Potential future insight improvements:
     - Rename/source-mark each original meeting with "-MERGED".
     - Create a new merged meeting.
     - Run full processing on the merged meeting.
-  - Orb/live state context improvements.
-    - During recording, change the orb context from ready to recording.
-    - During processing, change the orb context from ready to processing.
-    - Add more useful status context around what the orb represents.
+  - Orb/live state context improvements are now implemented.
+    - Keep future polish focused on copy, progress detail, and making background queue state visible.
 - Remove unused legacy UI code from `main_window.py`.
 - Continue splitting `main_window.py` into page/component modules.
 - Add screenshot-based UI QA notes for Dark and Graphite Light.
@@ -334,18 +363,18 @@ Potential future insight improvements:
 
 ## Last Verified State
 
-- Last code verification: 2026-05-26.
-- Full test discovery passed after the live transcript / insights parser / deletion hardening pass:
-  - 34 tests OK.
+- Last code verification: 2026-05-28.
+- Full test discovery passed after the processing resilience / glossary / technical template / meeting context pass:
+  - 56 tests OK.
 - Latest UI smoke check:
   - Offscreen geometry check at 780x560, 1024x680, and 1366x768 found 0 visible child-boundary violations.
 - Most recent feature batch:
-  - Live system-audio transcript streaming into WhisperLive during recording.
-  - Live Capture setup collapses during recording and returns with New Meeting.
-  - Meeting Workspace prioritizes Structured notes and Transcript evidence first.
-  - Insights parser handles `*` bullets, HTML badge fragments, parenthetical confidence, and better decision/action separation.
-  - Processing failures persist `processing_failed` metadata instead of silently leaving meetings stuck.
-  - Meeting deletion now closes matching views, skips active folders, clears read-only bits, and retries Windows/OneDrive folder removal.
+  - Full processing is faster because file transcription no longer sleeps in real time.
+  - Whisper chunk failures preserve partial transcript details and can be retried more intelligently.
+  - Speaker Audio and Microphone Audio are separated before notes generation to reduce bleed-related duplicate interpretation.
+  - Meeting Overview includes editable meeting context that is reused during reprocess.
+  - Technical Change Session template and IT glossary support infrastructure/GPO working sessions.
+  - Orb/status card reflects recording and processing state with timer/progress detail.
 
 ## Current Next Recommendations
 
@@ -353,7 +382,7 @@ Potential future insight improvements:
   - First: import external recording as a new meeting, because it unlocks recovery for meetings recorded elsewhere and creates reusable file-ingest plumbing.
   - Second: background processing queue, because back-to-back meetings are a real workflow blocker and this will also improve import and merge UX.
   - Third: merge meetings, because it depends on reliable import/process orchestration and benefits from background processing.
-  - Quick win anytime: orb/live state context, because it is smaller and improves confidence while the larger workflow work is underway.
+  - Orb/live state context is done; future status work should fold into the background processing queue.
 - Continue real-meeting live capture QA:
   - live transcript is working, but perceived latency is still mostly WhisperLive/server/model behavior
   - current UI now favors fewer, more stable transcript rows instead of many choppy fragments
@@ -801,4 +830,57 @@ Remaining roadmap items:
 - Verification:
   - Full test discovery passed: 38 tests OK.
   - Offscreen UI smoke check passed at `1766x1004` with 9 stacked pages, 8 nav buttons, 7 Review Queue meeting columns, and 9 Actions columns.
+
+## 2026-05-28 Update - Processing Resilience, Context, and Technical Notes
+
+- Branding / product context:
+  - Added `.notes/BRANDING.md` for Hallister Labs, Nova Suite, and Nova Notetaker naming/design guidance.
+  - Hallister Labs is the company, Nova Suite is the product family, and Nova Notetaker remains the app name.
+  - Brand direction stays calm, graphite, enterprise-safe, local-first, and orange-accented.
+
+- Whisper / long-meeting resilience:
+  - File transcription no longer intentionally waits in real time between chunks.
+  - Added settings for WebSocket chunk delay, post-audio quiet wait, and maximum post-audio wait.
+  - Long WAV chunk processing records structured per-chunk diagnostics.
+  - Partial transcript chunks can be preserved if a later chunk fails.
+  - Retry / repair can reuse previous successful chunks where metadata has them.
+  - Processing diagnostics now include transcription seconds, notes seconds, chunk details, and capture quality.
+
+- Source-separated transcripts:
+  - Speaker/system audio and microphone audio remain separate in the notes prompt.
+  - This is intended to help Ollama/GPT identify duplicate phrases caused by speaker-to-mic bleed and keep only one interpretation.
+  - The saved transcript still preserves source sections for evidence review.
+
+- Processing UX / repair:
+  - Meetings filter includes Needs repair.
+  - Repair action is now labeled Retry / repair.
+  - Progress messages now include chunk-level transcription and notes-generation state.
+  - Meeting Overview quality summary now surfaces audio health, transcript health, chunk counts, timing, warnings, and repair clues.
+
+- Meeting Overview / orb polish:
+  - Orb/status card now reflects Ready, Recording, Finalizing, and Processing.
+  - During recording, the card shows the active timer.
+  - During processing, the card shows progress text and a progress bar.
+  - Meeting Overview side panel now prioritizes Action Items first, then Meeting context and markers, with health/quality/resolve lower.
+
+- Meeting context:
+  - Meeting metadata now includes `meeting_context`.
+  - Meeting Overview includes an editable Meeting context box.
+  - Reprocess includes saved meeting context in the AI prompt.
+  - Use this to correct inference drift before rerunning notes, especially for domain-specific working sessions.
+
+- Technical Change Session template and glossary:
+  - Added Technical Change Session template for infrastructure/GPO/change-planning meetings.
+  - Added IT glossary support in `app/core/glossary.py` and `config/glossary.json`.
+  - WhisperLive receives glossary hotwords where supported.
+  - Ollama receives glossary context and correction hints for ADS/API, GPO/GBO, OneDrive, Folder Redirection, OU, UMI Documents, and related terms.
+  - Prompt was tightened to favor evidence, separate proposed ideas from decisions, avoid invented owners, and avoid promoting garbled transcript fragments into action items.
+
+- Review of `meetings/2026-05-27_171007_onedrive-gpo-stuff`:
+  - Old notes were saved as `notes - Copy.md`.
+  - Main issue was not just template shape; several transcript mishears made the AI infer "API project" and promote garbled lines into actions.
+  - Technical template, glossary corrections, source-separated prompt handling, and noisy-action filtering were added to tighten future reprocesses.
+
+- Verification:
+  - Full test discovery passed after this batch: 56 tests OK.
 

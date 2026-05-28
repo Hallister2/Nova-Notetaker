@@ -1,6 +1,6 @@
 # Nova Notetaker UI Design System
 
-Last updated: 2026-05-26
+Last updated: 2026-05-28
 
 Purpose: Keep Nova Notetaker visually consistent as it evolves from a prototype into a calm enterprise meeting-intelligence app.
 
@@ -127,6 +127,15 @@ The user should always understand:
 - Whether mic/system audio are active.
 - What Nova has produced so far.
 
+The Nova orb/status box should be operational, not decorative:
+
+- Ready state: calm readiness copy.
+- Recording state: show Recording and the active recording timer.
+- Finalizing state: show post-capture handoff state.
+- Processing state: show Processing, live progress text, and a progress bar.
+
+Avoid leaving generic "all systems operational" copy visible when Nova is actively recording or processing.
+
 ## Meetings
 
 Meetings page should feel like an operational index:
@@ -152,6 +161,26 @@ The overview should feel like an executive briefing:
 7. Meeting details / health.
 
 Raw transcript and technical health should be available but visually secondary.
+
+Current side-panel priority:
+
+1. Action Items.
+2. Meeting context.
+3. Meeting markers.
+4. Meeting health / Quality Summary.
+5. Resolve Meeting.
+6. Technical details.
+
+Meeting context is user-authored metadata that can guide the next AI reprocess. Keep it close to the review workflow, but do not let it displace action items as the primary side-panel task.
+
+Quality Summary should be concise and diagnostic:
+
+- System audio health.
+- Microphone state.
+- Transcript presence.
+- Transcription chunk counts.
+- Processing warnings.
+- Repair/retry status when relevant.
 
 ## Settings And Templates
 

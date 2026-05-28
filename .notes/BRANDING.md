@@ -1,5 +1,7 @@
 # Hallister Labs Brand Context
 
+Last updated: 2026-05-28
+
 Company name: Hallister Labs
 
 Website: www.hallisterlabs.com
@@ -165,6 +167,10 @@ Good UI copy:
 Avoid overly cute, salesy, or verbose copy in operational surfaces. The app should sound competent and steady.
 
 Use specific status text when processing may take time. Prefer telling the user what is happening, such as "Preparing transcript" or "Generating notes with Ollama", over vague loading language.
+
+Operational status language should match the real app state. For Nova Notetaker, the orb/status area should use terms such as Ready, Recording, Finalizing, Processing, Transcribing speaker audio chunk 3/14, and Generating notes. This is part of the Hallister Labs brand promise: calm tools that explain what they are doing.
+
+When an AI-generated interpretation may benefit from user context, prefer visible user-editable context fields over hidden prompt assumptions. For Nova Notetaker, per-meeting context is stored with metadata and should be reused during reprocess.
 
 ## Product Metadata And Exports
 
