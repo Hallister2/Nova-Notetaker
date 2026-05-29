@@ -82,6 +82,94 @@ These items appear implemented or far enough along that they should no longer be
 
 These should remain maintenance/polish items only.
 
+
+## Priority Engineering Fix: Contextual Topic Persistence and Co-Reference Resolution
+
+Status: High priority for Codex / engineering follow-up.
+
+Problem:
+
+Nova's current meeting intelligence can lose conversational context across longer meetings and transcript chunks. This creates technically correct but operationally vague notes. For example, a summary line such as "The current system does not have a clear bulk request button for utility accounts" should be grounded more specifically as a Waypoint permissions / visibility issue around Utility Account Creation. Similarly, if a meeting discusses SCCM for several minutes and someone later says "the server", Nova should infer that the likely reference is the SCCM server unless the topic clearly changed.
+
+Goal:
+
+Add a semantic context layer that tracks active topics, systems, people, aliases, and unresolved references throughout the meeting. Final notes should read like they were produced by someone who followed the conversation, not just summarized isolated transcript chunks.
+
+Desired behavior:
+
+- Resolve vague references using active meeting context.
+  - "the server" -> "SCCM server" when SCCM is the active topic.
+  - "the button" -> "Waypoint Utility Account Creation button" when discussing Waypoint utility account creation.
+  - "that tool" -> the most likely active tool/system from the current topic.
+- Normalize aliases into canonical entities.
+  - "bulk request button", "utility account create button", "bulk utility tool", and "utility account creation" should map to one canonical Waypoint utility account creation workflow/tool when appropriate.
+- Detect whether a chunk continues the current topic, expands it, switches topics, or returns to a previous topic.
+- Carry context across transcript chunks so chunk boundaries do not reset understanding.
+- Improve action item ownership inference using nearby speaker mentions, role context, and responsibility language.
+
+Suggested implementation approach:
+
+1. Add an entity extraction pass after transcript cleanup. Capture systems, applications, servers, people, teams, locations, workflows, buttons/tools, acronyms, and unresolved references.
+2. Maintain an active topic memory across chunks. Each topic should include canonical name, aliases, related systems, participants, confidence, and last-mentioned timestamp.
+3. Add topic decay scoring so recent/high-frequency topics dominate ambiguous reference resolution, but older topics can still be revived if the conversation returns to them.
+4. Add a co-reference resolution pass before final summarization. Replace or annotate vague terms with the most likely contextual entity when confidence is high enough.
+5. Separate raw transcript, semantic interpretation, and final operational summary layers. Do not make the final summarizer rely only on raw chunk text.
+6. Add confidence scoring and evidence references for inferred replacements so uncertain inferences can be marked for review instead of silently treated as fact.
+
+Example active topic structure:
+
+```json
+{
+  "active_topics": [
+    {
+      "topic": "Waypoint utility account creation",
+      "canonical_entity": "Waypoint Utility Account Creation Tool",
+      "aliases": [
+        "bulk request button",
+        "utility account create button",
+        "bulk utility tool",
+        "utility account creation"
+      ],
+      "systems": [
+        "Waypoint",
+        "Active Directory",
+        "Workspace One"
+      ],
+      "participants": [
+        "Robin",
+        "Angie",
+        "Christy",
+        "Chad"
+      ],
+      "confidence": 0.9,
+      "last_mentioned": "timestamp"
+    }
+  ]
+}
+```
+
+Example semantic rewrite:
+
+Raw transcript reference:
+
+"I don't have a bulk request button, but I have a utility account create button."
+
+Semantic interpretation:
+
+"The speaker is comparing permissions/views in Waypoint and identifying inconsistent visibility of the Utility Account Creation function."
+
+Better final note:
+
+"Waypoint users appear to have inconsistent visibility into the Utility Account Creation / bulk utility request workflow. Some users see a Utility Account Creation button while others do not, suggesting a permissions or role configuration issue."
+
+Related reliability concern:
+
+WhisperLive chunk failures can break topic continuity. Consider overlap windows, retrying failed chunks, transcript stitching, and a post-transcription repair pass so the semantic memory is not built on missing context.
+
+Expected outcome:
+
+Nova should produce notes that are less vague, more operationally useful, and better grounded in the actual systems being discussed. This should be treated as a core meeting intelligence improvement, not just a summarization prompt tweak.
+
 ## Refined UI Design Directive
 
 Use this as the next Codex-facing design pass.

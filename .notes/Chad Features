@@ -1,58 +1,13 @@
-# FEATURES TO ADD
-
-## Active backlog
-
-- Import external recording as a new meeting.
-  - Let Chad drop in an existing recording, such as an iPhone Voice Memo export, and process it as a new Nova meeting.
-  - Best home is likely the Meetings page as an Import button.
-  - The import flow should ask for the same setup details as normal capture: title, meeting profile, note template, and optional meeting context.
-  - Instead of Record, the final action should be Process / Import and process.
-  - Implementation should copy/convert the source audio into a new meeting folder, then run normal processing.
-
-- Background processing queue.
-  - Longer meetings can still take a while even after chunk resilience, so Nova should be able to process in the background while Chad starts the next meeting.
-  - Worth more than an interrupt button as the next workflow improvement.
-  - Queue should show which meeting is transcribing, which chunk is active, when notes are generating, and which jobs are waiting.
-  - Reprocess, imported recordings, and future merge-meeting jobs should all use the same queue.
-
-- Merge meetings.
-  - Add a merge meetings button for selected meetings.
-  - Merge transcripts.
-  - Rename or source-mark each original meeting with "-MERGED".
-  - Create a new merged meeting.
-  - Run full processing on the new merged meeting.
-  - This likely benefits from the same background queue used by import/reprocess.
-
-## Implemented / updated 2026-05-28
-
-- Orb state/context is implemented.
-  - The orb box now reflects Ready, Recording, Finalizing, and Processing.
-  - During recording, the subtext shows the recording timer.
-  - During processing, the subtext shows current progress messages and a progress bar.
-
-- Meeting context field is implemented.
-  - Meeting Overview includes an editable Meeting context box.
-  - Context is stored in metadata and used by the next notes-only or full reprocess.
-  - Use this for clarification such as: "This is a meeting with a team member about the use of OneDrive GPOs and Folder Redirection GPOs. We discussed testing policies to validate impact of GPO changes."
-
-- Meeting Overview left column was reprioritized.
-  - Action Items are now the primary side-panel focus.
-  - Meeting context and markers follow.
-  - Meeting health, Quality Summary, and Resolve Meeting remain available but lower in the column.
-
-- Failed-processing repair polish is partially implemented.
-  - Meetings can be filtered by Needs repair.
-  - Retry / repair is more obvious.
-  - Repair can run full processing when transcripts or notes are missing, and can resume missing/failed transcription chunks when metadata allows it.
-
-- Whisper chunk resilience is implemented.
-  - Long recordings are chunked.
-  - Successful chunks can be retained.
-  - Failed chunks are recorded in processing diagnostics.
-  - Retry can reuse successful chunks and focus on missing/failed pieces.
-
-- Processing progress messages are implemented.
-  - Processing status now reports states such as transcribing speaker/mic chunk counts and notes generation.
-
-- Meeting quality summary is improved.
-  - Meeting Overview now shows system audio, mic state, transcript presence, chunk counts, transcription timing, and warnings where available.
+Fixes needed: -Meetings screen
+  -The list of meetings is great
+  -Refresh - Place 4th in UI order
+  -Reprocess - Place 1st in UI order
+  -Retry/Repair - Can be done from within the meeting. Not needed here.
+  -Batch Reprocess - Remove
+  -rebuild index - Place 2nd in UI order
+  -Open Folder - Can be done from within the meeting. Not needed here.
+  -Pin Important - Can this be moved to a table column per meeting that can be enabled?
+  -And is it possible to get this pin button to look like an actual pin?
+  -Exort Breifing - Can be done from within the meeting. Not needed here.
+  -Export Calendar - Remove
+  -Delete Selected - Place 3rd in UI order
