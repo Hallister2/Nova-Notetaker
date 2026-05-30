@@ -96,21 +96,21 @@ ASSETS_DIR = APP_ROOT / "assets"
 CLOSED_ACTION_STATUSES = {"done", "closed"}
 
 NAV_ASSETS = [
-    ("Capture - Default.png", "Capture - Active.png"),
-    ("Meetings - Default.png", "Meetings - Active.png"),
-    ("Review - Default.png", "Review - Active.png"),
-    ("Meetings - Default.png", "Meetings - Active.png"),
-    ("Review - Default.png", "Review - Active.png"),
-    ("Templates - Default.png", "Templates - Active.png"),
-    ("Settings - Default.png", "Settings - Active.png"),
-    ("Settings - Default.png", "Settings - Active.png"),
+    ("Nav - Capture.png", "Nav - Capture Active.png"),
+    ("Nav - Meetings.png", "Nav - Meetings Active.png"),
+    ("Nav - Review.png", "Nav - Review Active.png"),
+    ("Nav - Search.png", "Nav - Search Active.png"),
+    ("Nav - Calendar.png", "Nav - Calendar Active.png"),
+    ("Nav - Logs.png", "Nav - Logs Active.png"),
+    ("Nav - Templates.png", "Nav - Templates Active.png"),
+    ("Nav - Settings.png", "Nav - Settings Active.png"),
 ]
 
 EMPTY_ASSETS = {
-    "meetings": "Empty - No meetings.png",
-    "actions": "Empty - No Actions.png",
-    "calendar": "Empty - No Calendar.png",
-    "search": "Empty - No Search.png",
+    "meetings": "Nova - Empty Meetings.png",
+    "actions": "Nova - Empty Actions.png",
+    "calendar": "Nova - Empty Calendar.png",
+    "search": "Nova - Empty Search.png",
 }
 
 
@@ -669,7 +669,7 @@ class MainWindow(QMainWindow):
             self.current_theme = "executive_dark"
 
         self.setWindowTitle("Nova Notetaker")
-        app_icon = self._asset_icon("App Icon.png")
+        app_icon = self._asset_icon("Nova Notetaker - Icon.png")
         if not app_icon.isNull():
             self.setWindowIcon(app_icon)
         self.setMinimumSize(780, 560)
@@ -726,7 +726,7 @@ class MainWindow(QMainWindow):
 
         self.sidebar_brand = QLabel()
         self.sidebar_brand.setObjectName("Transparent")
-        self.sidebar_brand.setPixmap(self._asset_pixmap("Brand Mark 3.png", 178, 52))
+        self.sidebar_brand.setPixmap(self._asset_pixmap("Nova Notetaker - Application Logo.png", 178, 52))
         self.sidebar_brand.setMinimumHeight(54)
         layout.addWidget(self.sidebar_brand)
         layout.addSpacing(20)

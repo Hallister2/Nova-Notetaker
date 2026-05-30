@@ -25,7 +25,7 @@ class OrbWidget(QWidget):
 
     @staticmethod
     def _load_orb_pixmap() -> QPixmap:
-        image = QImage(str(APP_ROOT / "assets" / "Orb.png"))
+        image = QImage(str(APP_ROOT / "assets" / "Nova - Orb.png"))
         if image.isNull():
             return QPixmap()
         rect = image.rect()
