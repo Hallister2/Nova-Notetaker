@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from difflib import SequenceMatcher
 from pathlib import Path
 import re
@@ -9,13 +10,14 @@ from typing import Any, Callable
 import wave
 
 from app.audio.audio_validation import inspect_wav
-from app.core.glossary import glossary_prompt_context
+from app.core.glossary import glossary_prompt_context, load_glossary_terms
 from app.core.profiles import MeetingProfile
 from app.core.templates import NoteTemplate
 from app.core.settings import load_settings
 from app.intelligence.insights import build_insights_from_notes, write_insights_json
 from app.intelligence.ollama_client import OllamaClient
 from app.storage.meeting_store import MeetingMetadata, MeetingStore
+from app.transcription.transcript_cleanup import apply_glossary_corrections, reduce_cross_bleed_for_profile
 from app.transcription.whisperlive_client import TranscriptionResult, WhisperLiveClient
 
 
@@ -116,6 +118,19 @@ class MeetingProcessor:
                 )
             transcription_seconds = time.monotonic() - transcription_started
 
+            # Deterministic post-correction pass using glossary terms
+            on_status("Applying glossary corrections")
+            glossary_terms = load_glossary_terms()
+            transcript_results = apply_glossary_corrections(transcript_results, glossary_terms)
+
+            # Speaker-bleed cleanup (profile-driven)
+            capture_profile = str(getattr(metadata, "capture_profile", "") or "external_mic_speakers")
+            if settings.get("transcription", {}).get("cross_bleed_cleanup", True):
+                transcript_results, bleed_warnings = reduce_cross_bleed_for_profile(transcript_results, capture_profile)
+                for bw in bleed_warnings:
+                    warnings.append(bw)
+                    on_status(bw)
+
             for result in transcript_results:
                 if result.details:
                     transcription_details[result.source] = result.details
@@ -159,7 +174,13 @@ class MeetingProcessor:
             on_status(warning)
             notes_path = self.meeting_store.write_notes_stub(folder, metadata, transcript_path, warnings)
 
-        insights_path = write_insights_json(folder, build_insights_from_notes(notes_path))
+        meeting_date = None
+        try:
+            if metadata.started_at:
+                meeting_date = datetime.fromisoformat(metadata.started_at)
+        except (ValueError, TypeError):
+            pass
+        insights_path = write_insights_json(folder, build_insights_from_notes(notes_path, meeting_date=meeting_date))
         on_status(f"Meeting insights saved: {insights_path.name}")
         metadata.processing = {
             "transcript_path": str(transcript_path),

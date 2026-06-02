@@ -10,6 +10,24 @@ from typing import Any
 from app.core.settings import APP_ROOT, load_settings
 
 
+def _migrate_metadata(data: dict[str, Any]) -> dict[str, Any]:
+    """Bring older metadata.json dicts up to the current schema version."""
+    version = int(data.get("schema_version") or 1)
+
+    if version < 2:
+        # v1 → v2: capture_profile moved from audio settings into metadata directly.
+        # If missing, leave as None so the processor falls back to the app default.
+        data.setdefault("capture_profile", None)
+        # meeting_context was not always present
+        data.setdefault("meeting_context", "")
+        data["schema_version"] = 2
+
+    return data
+
+
+METADATA_SCHEMA_VERSION = 2
+
+
 @dataclass
 class MeetingMetadata:
     title: str
@@ -25,6 +43,7 @@ class MeetingMetadata:
     status: str = "created"
     audio_files: dict[str, Any] = field(default_factory=dict)
     processing: dict[str, Any] = field(default_factory=dict)
+    schema_version: int = METADATA_SCHEMA_VERSION
 
 
 class MeetingStore:
@@ -78,6 +97,7 @@ class MeetingStore:
         path = folder / "metadata.json"
         with path.open("r", encoding="utf-8") as handle:
             data = json.load(handle)
+        data = _migrate_metadata(data)
         fields = MeetingMetadata.__dataclass_fields__
         filtered = {key: value for key, value in data.items() if key in fields}
         return MeetingMetadata(**filtered)

@@ -41,6 +41,8 @@ class CaptureService:
         self.on_status = on_status
         self.on_level = on_level
         self.stop_event = Event()
+        self.pause_event = Event()   # cleared = paused, set = running
+        self.pause_event.set()
         self.callbacks_enabled = Event()
         self.callbacks_enabled.set()
         self.callback_lock = Lock()
@@ -81,6 +83,7 @@ class CaptureService:
 
     def request_stop(self) -> None:
         self.stop_event.set()
+        self.pause_event.set()  # Unblock any paused loops so threads can exit
         with self.stream_lock:
             stream = self.loopback_stream
         if stream is not None:
@@ -89,6 +92,16 @@ class CaptureService:
                     stream.stop_stream()
             except Exception:
                 pass
+
+    def pause(self) -> None:
+        self.pause_event.clear()
+        self._emit_status("Recording paused")
+        self._emit_level("mic", 0.0)
+        self._emit_level("system", 0.0)
+
+    def resume(self) -> None:
+        self.pause_event.set()
+        self._emit_status("Recording resumed")
 
     def _emit_status(self, message: str) -> None:
         if not self.callbacks_enabled.is_set():
@@ -126,9 +139,10 @@ class CaptureService:
                 def callback(indata, frames, time_info, status):
                     if status:
                         self._emit_status(f"Mic status: {status}")
-                    audio_file.write(indata.copy())
-                    level = float(np.sqrt(np.mean(np.square(indata)))) if indata.size else 0.0
-                    self._emit_level("mic", min(level * 20, 1.0))
+                    if self.pause_event.is_set():
+                        audio_file.write(indata.copy())
+                        level = float(np.sqrt(np.mean(np.square(indata)))) if indata.size else 0.0
+                        self._emit_level("mic", min(level * 20, 1.0))
 
                 with sd.InputStream(
                     samplerate=self.config.mic_sample_rate,
@@ -176,6 +190,10 @@ class CaptureService:
 
                     chunks_written = 0
                     while not self.stop_event.is_set():
+                        # Block while paused, keeping the stream open so it doesn't timeout
+                        if not self.pause_event.is_set():
+                            self.pause_event.wait(timeout=0.1)
+                            continue
                         try:
                             data = stream.read(chunk, exception_on_overflow=False)
                         except Exception:

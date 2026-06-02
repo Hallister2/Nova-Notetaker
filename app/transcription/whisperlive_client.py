@@ -51,6 +51,9 @@ class WhisperLiveClient:
             float(transcription.get("post_audio_max_wait_seconds", min(self.timeout_seconds, 120))),
         )
         self.hotwords = str(transcription.get("hotwords", "") or glossary_hotwords()).strip()
+        self.word_timestamps = bool(transcription.get("word_timestamps", False))
+        # Words whose Whisper probability falls below this threshold are flagged [unclear]
+        self.low_confidence_threshold = float(transcription.get("low_confidence_threshold", 0.4))
 
     def transcribe_file(
         self,
@@ -288,7 +291,7 @@ class WhisperLiveClient:
                 "hotwords": self.hotwords or None,
                 "enable_diarization": False,
                 "max_speakers": 10,
-                "word_timestamps": False,
+                "word_timestamps": self.word_timestamps,
             }))
 
             receiver = Thread(
@@ -333,8 +336,8 @@ class WhisperLiveClient:
                 return
             time.sleep(0.1)
 
-    @staticmethod
     def _receive_messages(
+        self,
         ws: websocket.WebSocket,
         client_uid: str,
         ready: Event,
@@ -384,6 +387,10 @@ class WhisperLiveClient:
                 text = str(segment.get("text", "")).strip()
                 if not text:
                     continue
+                # Apply confidence flagging if word-level data is present
+                words = segment.get("words")
+                if self.word_timestamps and isinstance(words, list) and words:
+                    text = self._flag_low_confidence_words(words, self.low_confidence_threshold)
                 key = (
                     str(segment.get("start", "")),
                     str(segment.get("end", "")),
@@ -392,6 +399,21 @@ class WhisperLiveClient:
                 segments_by_key[key] = text
                 received_text.set()
                 last_activity[0] = time.monotonic()
+
+    @staticmethod
+    def _flag_low_confidence_words(words: list[dict], threshold: float) -> str:
+        """Reconstruct segment text, tagging words whose probability is below threshold."""
+        parts = []
+        for word_info in words:
+            word = str(word_info.get("word", "")).strip()
+            if not word:
+                continue
+            prob = float(word_info.get("probability", 1.0))
+            if prob < threshold:
+                parts.append(f"[unclear:{word}]")
+            else:
+                parts.append(word)
+        return " ".join(parts)
 
     @staticmethod
     def _iter_wav_float32_chunks(audio_path: Path, target_rate: int = 16000, chunk_size: int = 4096):

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import json
 import re
+from pathlib import Path
+
+from app.core.settings import CONFIG_DIR
 
 
 ACTION_PATTERNS = (
@@ -19,15 +23,33 @@ ACTION_TASK_STOP_PREFIXES = (
     "does a match",
 )
 
-DATE_PATTERN = re.compile(
-    r"\b("
+_BASE_DATE_PATTERN = (
     r"next\s+(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)|"
+    r"this\s+(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)|"
     r"(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),?\s+[A-Z][a-z]+\s+\d{1,2}(?:st|nd|rd|th)?|"
-    r"(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2}(?:st|nd|rd|th)?|"
-    r"Friday,\s+June\s+5|Wednesday,\s+June\s+10|Friday,\s+June\s+14|Monday,\s+June\s+17"
-    r")\b",
-    re.IGNORECASE,
+    r"(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2}(?:st|nd|rd|th)?(?:,?\s+\d{4})?"
 )
+
+
+def _load_hints(path: Path = CONFIG_DIR / "hints.json") -> dict:
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _build_date_pattern() -> re.Pattern:
+    hints = _load_hints()
+    extra_patterns = [re.escape(p.strip()) for p in hints.get("extra_date_patterns", []) if p.strip()]
+    combined = _BASE_DATE_PATTERN
+    if extra_patterns:
+        combined = combined + "|" + "|".join(extra_patterns)
+    return re.compile(r"\b(" + combined + r")\b", re.IGNORECASE)
+
+
+DATE_PATTERN = _build_date_pattern()
 
 
 def build_note_hints(transcript: str) -> str:

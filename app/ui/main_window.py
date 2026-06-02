@@ -54,13 +54,24 @@ from PySide6.QtWidgets import (
 from app.audio.capture_service import CaptureConfig, CaptureService
 from app.audio.device_manager import AudioDevice, AudioDeviceManager
 from app.core.glossary import glossary_hotwords
+from app.core.health import check_services_async
 from app.core.profiles import MeetingProfile, ProfileStore
-from app.core.settings import APP_ROOT, load_settings, save_settings
+from app.core.settings import APP_ROOT, load_settings, save_settings, validate_settings
 from app.core.templates import NoteTemplate, TemplateStore
 from app.intelligence.insights import InsightItem, MeetingInsights, load_or_build_insights, write_insights_json
 from app.storage.meeting_index import write_meeting_index
 from app.storage.meeting_store import MeetingMetadata, MeetingStore
 from app.transcription.whisperlive_client import WhisperLiveClient
+from app.ui.constants import (
+    ASSETS_DIR,
+    CAPTURE_PROFILES,
+    CLOSED_ACTION_STATUSES,
+    DEFAULT_LOOPBACK_DEVICE,
+    DEFAULT_MIC_DEVICE,
+    EMPTY_ASSETS,
+    NAV_ASSETS,
+)
+from app.ui.dialogs import ReprocessDialog, SettingsDialog
 from app.ui.orb_widget import OrbWidget
 from app.ui.live_insights import (
     append_or_merge_live_row,
@@ -79,553 +90,17 @@ from app.ui.review_helpers import (
     write_speaker_aliases,
 )
 from app.ui.styles import THEME_LABELS, build_stylesheet
+from app.ui.widgets import InsightCalendarWidget, SortableTableItem, select_combo_by_data
+from app.ui.workers import BatchProcessingWorker, CaptureWorker, LiveTranscriptionWorker, ProcessingWorker
 from app.workflows.meeting_processor import MeetingProcessor
 
 
-CAPTURE_PROFILES = {
-    "Laptop mic + speakers": "laptop_speakers",
-    "External mic + speakers": "external_mic_speakers",
-    "Headphones / headset": "headphones",
-    "Conference room": "conference_room",
-    "Debug / raw capture": "debug_raw",
-}
-
-DEFAULT_LOOPBACK_DEVICE = "__default_wasapi_loopback__"
-DEFAULT_MIC_DEVICE = "__default_microphone__"
-ASSETS_DIR = APP_ROOT / "assets"
-CLOSED_ACTION_STATUSES = {"done", "closed"}
-
-NAV_ASSETS = [
-    ("Nav - Capture.png", "Nav - Capture Active.png"),
-    ("Nav - Meetings.png", "Nav - Meetings Active.png"),
-    ("Nav - Review.png", "Nav - Review Active.png"),
-    ("Nav - Search.png", "Nav - Search Active.png"),
-    ("Nav - Calendar.png", "Nav - Calendar Active.png"),
-    ("Nav - Logs.png", "Nav - Logs Active.png"),
-    ("Nav - Templates.png", "Nav - Templates Active.png"),
-    ("Nav - Settings.png", "Nav - Settings Active.png"),
-]
-
-EMPTY_ASSETS = {
-    "meetings": "Nova - Empty Meetings.png",
-    "actions": "Nova - Empty Actions.png",
-    "calendar": "Nova - Empty Calendar.png",
-    "search": "Nova - Empty Search.png",
-}
-
-
-class SortableTableItem(QTableWidgetItem):
-    def __lt__(self, other) -> bool:
-        left = self.data(Qt.UserRole + 1)
-        right = other.data(Qt.UserRole + 1)
-        if left is not None and right is not None:
-            return str(left) < str(right)
-        return super().__lt__(other)
-
-
-class InsightCalendarWidget(QCalendarWidget):
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._items_by_date: dict[str, list[dict[str, object]]] = {}
-
-    def set_items_by_date(self, items_by_date: dict[str, list[dict[str, object]]]) -> None:
-        self._items_by_date = items_by_date
-        self.updateCells()
-
-    def paintCell(self, painter: QPainter, rect, date: QDate) -> None:
-        super().paintCell(painter, rect, date)
-        items = self._items_by_date.get(date.toString("yyyy-MM-dd"), [])
-        if not items:
-            return
-
-        approved = sum(1 for item in items if item.get("approved"))
-        total = len(items)
-        painter.save()
-        painter.setRenderHint(QPainter.Antialiasing, True)
-        accent = QColor("#FF8A1F" if approved else "#85888E")
-        fill = QColor(accent)
-        fill.setAlpha(52 if approved else 34)
-        badge_rect = rect.adjusted(rect.width() - 29, rect.height() - 21, -5, -5)
-        painter.setPen(accent)
-        painter.setBrush(fill)
-        painter.drawRoundedRect(badge_rect, 7, 7)
-        painter.setPen(accent)
-        painter.drawText(badge_rect, Qt.AlignCenter, str(total))
-        if approved:
-            dot_rect = rect.adjusted(7, rect.height() - 13, -(rect.width() - 14), -7)
-            painter.setBrush(accent)
-            painter.setPen(Qt.NoPen)
-            painter.drawEllipse(dot_rect)
-        painter.restore()
-
-
-def select_combo_by_data(combo: QComboBox, value: str) -> None:
-    for index in range(combo.count()):
-        if combo.itemData(index) == value:
-            combo.setCurrentIndex(index)
-            return
-
-
-class SettingsDialog(QDialog):
-    def __init__(
-        self,
-        parent: QWidget,
-        settings: dict,
-        microphones: list[AudioDevice],
-        loopbacks: list[AudioDevice],
-    ) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Nova Settings")
-        self.setMinimumWidth(560)
-        self.settings = settings
-        self.microphones = microphones
-        self.loopbacks = loopbacks
-
-        layout = QVBoxLayout(self)
-        form = QFormLayout()
-
-        self.mic_combo = QComboBox()
-        for device in microphones:
-            self.mic_combo.addItem(device.label, device.name)
-        self._select_combo_by_value(self.mic_combo, settings["audio"].get("mic_device_name", ""))
-
-        self.loopback_combo = QComboBox()
-        self.loopback_combo.addItem("None", "")
-        for device in loopbacks:
-            self.loopback_combo.addItem(device.label, device.name)
-        self._select_combo_by_value(self.loopback_combo, settings["audio"].get("system_loopback_device_name", ""))
-
-        self.profile_combo = QComboBox()
-        for label, value in CAPTURE_PROFILES.items():
-            self.profile_combo.addItem(label, value)
-        select_combo_by_data(self.profile_combo, settings["audio"].get("capture_profile", "laptop_speakers"))
-
-        self.provider_combo = QComboBox()
-        self.provider_combo.addItems(["ollama", "openai"])
-        self.provider_combo.setCurrentText(settings["ai"].get("provider", "ollama"))
-
-        self.ollama_url = QLineEdit(settings["ai"].get("ollama_url", ""))
-        self.ollama_model = QLineEdit(settings["ai"].get("ollama_model", ""))
-        self.ai_timeout = QSpinBox()
-        self.ai_timeout.setRange(10, 1800)
-        self.ai_timeout.setValue(int(settings["ai"].get("timeout_seconds", 180)))
-
-        self.transcription_enabled = QCheckBox()
-        self.transcription_enabled.setChecked(bool(settings["transcription"].get("enabled", False)))
-        self.whisper_url = QLineEdit(settings["transcription"].get("whisperlive_url", ""))
-        self.whisper_model = QLineEdit(settings["transcription"].get("model", "small"))
-        self.whisper_language = QLineEdit(settings["transcription"].get("language", "en"))
-        self.use_vad = QCheckBox()
-        self.use_vad.setChecked(bool(settings["transcription"].get("use_vad", True)))
-        self.cross_bleed_cleanup = QCheckBox()
-        self.cross_bleed_cleanup.setChecked(bool(settings["transcription"].get("cross_bleed_cleanup", True)))
-        self.transcription_timeout = QSpinBox()
-        self.transcription_timeout.setRange(10, 1800)
-        self.transcription_timeout.setValue(int(settings["transcription"].get("timeout_seconds", 120)))
-
-        form.addRow("Microphone", self.mic_combo)
-        form.addRow("System Audio", self.loopback_combo)
-        form.addRow("Capture Profile", self.profile_combo)
-        form.addRow("AI Provider", self.provider_combo)
-        form.addRow("Ollama URL", self.ollama_url)
-        form.addRow("Ollama Model", self.ollama_model)
-        form.addRow("AI Timeout", self.ai_timeout)
-        form.addRow("WhisperLive Enabled", self.transcription_enabled)
-        form.addRow("WhisperLive URL", self.whisper_url)
-        form.addRow("Whisper Model", self.whisper_model)
-        form.addRow("Whisper Language", self.whisper_language)
-        form.addRow("Use VAD", self.use_vad)
-        form.addRow("Speaker-Bleed Cleanup", self.cross_bleed_cleanup)
-        form.addRow("Transcription Timeout", self.transcription_timeout)
-        layout.addLayout(form)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-    def apply_to_settings(self) -> dict:
-        self.settings["audio"]["mic_device_name"] = str(self.mic_combo.currentData() or "")
-        self.settings["audio"]["system_loopback_device_name"] = str(self.loopback_combo.currentData() or "")
-        self.settings["audio"]["capture_profile"] = str(self.profile_combo.currentData() or "external_mic_speakers")
-        self.settings["ai"]["provider"] = self.provider_combo.currentText()
-        self.settings["ai"]["ollama_url"] = self.ollama_url.text().strip()
-        self.settings["ai"]["ollama_model"] = self.ollama_model.text().strip()
-        self.settings["ai"]["timeout_seconds"] = self.ai_timeout.value()
-        self.settings["transcription"]["enabled"] = self.transcription_enabled.isChecked()
-        self.settings["transcription"]["whisperlive_url"] = self.whisper_url.text().strip()
-        self.settings["transcription"]["model"] = self.whisper_model.text().strip()
-        self.settings["transcription"]["language"] = self.whisper_language.text().strip()
-        self.settings["transcription"]["use_vad"] = self.use_vad.isChecked()
-        self.settings["transcription"]["cross_bleed_cleanup"] = self.cross_bleed_cleanup.isChecked()
-        self.settings["transcription"]["timeout_seconds"] = self.transcription_timeout.value()
-        return self.settings
-
-    @staticmethod
-    def _select_combo_by_value(combo: QComboBox, value: str) -> None:
-        for index in range(combo.count()):
-            if combo.itemData(index) == value:
-                combo.setCurrentIndex(index)
-                return
-
-
-class ReprocessDialog(QDialog):
-    def __init__(
-        self,
-        parent: QWidget,
-        profiles: list[MeetingProfile],
-        templates: list[NoteTemplate],
-        current_profile_id: str,
-        current_template_id: str,
-    ) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Reprocess Meeting")
-        self.setMinimumWidth(520)
-        layout = QVBoxLayout(self)
-        self.notes_only = QRadioButton("Regenerate notes only")
-        self.notes_only.setChecked(True)
-        self.full = QRadioButton("Full reprocess: transcribe audio and regenerate notes")
-        layout.addWidget(self.notes_only)
-        layout.addWidget(self.full)
-
-        form = QFormLayout()
-        form.setHorizontalSpacing(14)
-        form.setVerticalSpacing(10)
-        self.profile_combo = QComboBox()
-        for profile in profiles:
-            self.profile_combo.addItem(f"{profile.name} ({profile.category})", profile.id)
-        select_combo_by_data(self.profile_combo, current_profile_id)
-
-        self.template_combo = QComboBox()
-        for template in templates:
-            self.template_combo.addItem(f"{template.name} ({template.category})", template.id)
-        select_combo_by_data(self.template_combo, current_template_id)
-        form.addRow("Meeting profile", self.profile_combo)
-        form.addRow("Note template", self.template_combo)
-        layout.addLayout(form)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-    @property
-    def mode(self) -> str:
-        return "full" if self.full.isChecked() else "notes_only"
-
-    @property
-    def profile_id(self) -> str:
-        return str(self.profile_combo.currentData() or "")
-
-    @property
-    def template_id(self) -> str:
-        return str(self.template_combo.currentData() or "")
-
-
-class CaptureWorker(QObject):
-    status = Signal(str)
-    level = Signal(str, float)
-    audio_chunk = Signal(bytes, int, int)
-    stopped = Signal()
-
-    def __init__(self, config: CaptureConfig) -> None:
-        super().__init__()
-        config.live_audio_callback = self.audio_chunk.emit
-        self.service = CaptureService(config, self.status.emit, self.level.emit)
-
-    @Slot()
-    def start(self) -> None:
-        self.service.start()
-
-    @Slot()
-    def stop(self) -> None:
-        self.service.stop()
-        self.stopped.emit()
-
-    def request_stop(self) -> None:
-        self.service.request_stop()
-
-
-class LiveTranscriptionWorker(QObject):
-    status = Signal(str)
-    segment = Signal(str, str, bool)
-    finished = Signal()
-
-    def __init__(self, settings: dict) -> None:
-        super().__init__()
-        transcription = settings.get("transcription", {})
-        self.enabled = bool(transcription.get("enabled", False))
-        self.url = str(transcription.get("whisperlive_url", "")).rstrip("/")
-        self.model = str(transcription.get("model", "small"))
-        self.language = str(transcription.get("language", "en"))
-        self.use_vad = bool(transcription.get("use_vad", True))
-        self.timeout_seconds = int(transcription.get("timeout_seconds", 120))
-        self.hotwords = str(transcription.get("hotwords", "") or glossary_hotwords()).strip()
-        self.client_uid = str(uuid.uuid4())
-        self.audio_queue: queue.Queue[tuple[bytes, int, int] | None] = queue.Queue(maxsize=80)
-        self.stop_requested = False
-        self.seen_segments: set[tuple[str, str, str]] = set()
-
-    @Slot()
-    def run(self) -> None:
-        if not self.enabled:
-            self.status.emit("Live transcript disabled; final transcript will be generated after recording.")
-            self.finished.emit()
-            return
-        if not self.url:
-            self.status.emit("Live transcript unavailable: WhisperLive URL is not configured.")
-            self.finished.emit()
-            return
-
-        ws_url = self._websocket_url()
-        ws: websocket.WebSocket | None = None
-        try:
-            ws = self._connect_websocket(ws_url)
-        except Exception as error:
-            if not self.stop_requested:
-                self.status.emit(f"Live transcript unavailable: {error}")
-            self.finished.emit()
-            return
-
-        try:
-            while not self.stop_requested:
-                if ws is None:
-                    try:
-                        ws = self._connect_websocket(ws_url, reconnect=True)
-                    except Exception as error:
-                        self.status.emit(f"Live transcript reconnect failed: {error}")
-                        self._wait_before_reconnect()
-                        continue
-
-                if not self._receive_available_segments(ws):
-                    ws = self._close_websocket(ws)
-                    continue
-                try:
-                    queued = self.audio_queue.get(timeout=0.1)
-                except queue.Empty:
-                    continue
-                if queued is None:
-                    break
-                try:
-                    self._send_audio_chunk(ws, queued)
-                except websocket.WebSocketConnectionClosedException:
-                    ws = self._close_websocket(ws)
-                    self._requeue_audio_chunk(queued)
-                except Exception as error:
-                    self.status.emit(f"Live transcript reconnecting after send failed: {error}")
-                    ws = self._close_websocket(ws)
-                    self._requeue_audio_chunk(queued)
-            if ws is not None:
-                try:
-                    ws.send("END_OF_AUDIO")
-                except Exception:
-                    pass
-                for _ in range(20):
-                    if not self._receive_available_segments(ws):
-                        break
-        except Exception as error:
-            if not self.stop_requested:
-                self.status.emit(f"Live transcript stopped: {error}")
-        finally:
-            self._close_websocket(ws)
-            self.finished.emit()
-
-    def _websocket_url(self) -> str:
-        parsed = urlparse(self.url)
-        scheme = "wss" if parsed.scheme == "https" else "ws"
-        host = parsed.hostname or self.url.replace("http://", "").replace("https://", "")
-        port = parsed.port or (443 if scheme == "wss" else 80)
-        return f"{scheme}://{host}:{port}"
-
-    def _connect_websocket(self, ws_url: str, reconnect: bool = False) -> websocket.WebSocket:
-        self.status.emit("Live transcript reconnecting" if reconnect else "Live transcript connecting")
-        ws = websocket.create_connection(ws_url, timeout=self.timeout_seconds)
-        ws.send(
-            json.dumps(
-                {
-                    "uid": self.client_uid,
-                    "language": self.language,
-                    "task": "transcribe",
-                    "model": self.model,
-                    "use_vad": self.use_vad,
-                    "send_last_n_segments": 4,
-                    "no_speech_thresh": 0.45,
-                    "clip_audio": False,
-                    "same_output_threshold": 4,
-                    "enable_translation": False,
-                    "target_language": "en",
-                    "hotwords": self.hotwords or None,
-                    "enable_diarization": False,
-                    "max_speakers": 10,
-                    "word_timestamps": False,
-                }
-            )
-        )
-        self._wait_for_server_ready(ws)
-        ws.settimeout(0.01)
-        self.status.emit("Live transcript listening")
-        return ws
-
-    def _wait_for_server_ready(self, ws: websocket.WebSocket) -> None:
-        while not self.stop_requested:
-            raw = ws.recv()
-            message = json.loads(raw) if raw else {}
-            if message.get("uid") not in (None, self.client_uid):
-                continue
-            if message.get("message") == "SERVER_READY":
-                return
-            if message.get("status") == "ERROR":
-                raise RuntimeError(str(message.get("message", "WhisperLive server error")))
-        raise RuntimeError("Live transcript stopped before WhisperLive became ready.")
-
-    def _send_audio_chunk(self, ws: websocket.WebSocket, queued: tuple[bytes, int, int]) -> None:
-        data, sample_rate, channels = queued
-        audio = WhisperLiveClient._pcm_bytes_to_float32(data, 2)
-        if channels > 1:
-            audio = audio.reshape(-1, channels).mean(axis=1)
-        if sample_rate != 16000:
-            audio = WhisperLiveClient._resample_linear(audio, sample_rate, 16000)
-        ws.send_binary(audio.astype("float32").tobytes())
-
-    def _requeue_audio_chunk(self, queued: tuple[bytes, int, int]) -> None:
-        try:
-            self.audio_queue.put_nowait(queued)
-        except queue.Full:
-            pass
-
-    def _wait_before_reconnect(self) -> None:
-        for _ in range(10):
-            if self.stop_requested:
-                return
-            QThread.msleep(100)
-
-    @staticmethod
-    def _close_websocket(ws: websocket.WebSocket | None) -> None:
-        if ws is None:
-            return None
-        try:
-            ws.close()
-        except Exception:
-            pass
-        return None
-
-    @Slot(bytes, int, int)
-    def enqueue_audio(self, data: bytes, sample_rate: int, channels: int) -> None:
-        if self.stop_requested:
-            return
-        try:
-            self.audio_queue.put_nowait((data, sample_rate, channels))
-        except queue.Full:
-            pass
-
-    @Slot()
-    def stop(self) -> None:
-        self.stop_requested = True
-        try:
-            self.audio_queue.put_nowait(None)
-        except queue.Full:
-            pass
-
-    def _receive_available_segments(self, ws: websocket.WebSocket) -> bool:
-        while True:
-            try:
-                raw = ws.recv()
-            except websocket.WebSocketTimeoutException:
-                return True
-            except websocket.WebSocketConnectionClosedException:
-                if not self.stop_requested:
-                    self.status.emit("Live transcript connection closed; reconnecting.")
-                return False
-            except Exception as error:
-                if not self.stop_requested:
-                    self.status.emit(f"Live transcript receive failed; reconnecting: {error}")
-                return False
-            if not raw:
-                return True
-            try:
-                message = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
-            if message.get("uid") not in (None, self.client_uid):
-                continue
-            if message.get("message") == "DISCONNECT":
-                if not self.stop_requested:
-                    self.status.emit("Live transcript server disconnected; reconnecting.")
-                return False
-            if message.get("status") == "ERROR":
-                if not self.stop_requested:
-                    self.status.emit(
-                        f"Live transcript server error; reconnecting: {message.get('message', 'unknown error')}"
-                    )
-                return False
-            for segment in message.get("segments", []):
-                text = str(segment.get("text", "")).strip()
-                if not text:
-                    continue
-                key = (str(segment.get("start", "")), str(segment.get("end", "")), text)
-                if key in self.seen_segments:
-                    continue
-                self.seen_segments.add(key)
-                final = bool(segment.get("completed") or segment.get("final"))
-                self.segment.emit("Meeting Audio", text, final)
-
-
-class ProcessingWorker(QObject):
-    status = Signal(str)
-    finished = Signal()
-
-    def __init__(self, folder: Path, metadata: MeetingMetadata, mode: str = "full") -> None:
-        super().__init__()
-        self.folder = folder
-        self.metadata = metadata
-        self.mode = mode
-
-    @Slot()
-    def process(self) -> None:
-        try:
-            MeetingProcessor().process(self.folder, self.metadata, self.status.emit, mode=self.mode)
-        except Exception as error:
-            message = f"Post-processing failed: {error}"
-            self.status.emit(message)
-            self.metadata.status = "processing_failed"
-            self.metadata.processing = {
-                **(self.metadata.processing if isinstance(self.metadata.processing, dict) else {}),
-                "warnings": [*((self.metadata.processing or {}).get("warnings", []) if isinstance(self.metadata.processing, dict) else []), message],
-                "mode": self.mode,
-            }
-            try:
-                MeetingStore().write_metadata(self.folder, self.metadata)
-            except Exception:
-                pass
-        finally:
-            self.finished.emit()
-
-
-class BatchProcessingWorker(QObject):
-    status = Signal(str)
-    finished = Signal()
-
-    def __init__(self, jobs: list[tuple[Path, MeetingMetadata]], mode: str = "notes_only") -> None:
-        super().__init__()
-        self.jobs = jobs
-        self.mode = mode
-
-    @Slot()
-    def process(self) -> None:
-        processor = MeetingProcessor()
-        try:
-            for index, (folder, metadata) in enumerate(self.jobs, start=1):
-                self.status.emit(f"Batch reprocess {index}/{len(self.jobs)}: {metadata.title or folder.name}")
-                processor.process(folder, metadata, self.status.emit, mode=self.mode)
-        except Exception as error:
-            self.status.emit(f"Batch reprocess failed: {error}")
-        finally:
-            self.finished.emit()
 
 
 class MainWindow(QMainWindow):
     request_worker_start = Signal()
     request_worker_stop = Signal()
+    _service_status_changed = Signal(str, str)  # (service_name, status)
 
     def __init__(self) -> None:
         super().__init__()
@@ -646,6 +121,7 @@ class MainWindow(QMainWindow):
         self.live_transcript_rows: list[tuple[str, str, str, bool]] = []
         self.live_tentative_insights = MeetingInsights()
         self.pending_processing_job: tuple[Path, MeetingMetadata, str] | None = None
+        self._processing_queue: list[tuple[Path, MeetingMetadata, str]] = []
         self.processing_thread: QThread | None = None
         self.processing_worker: ProcessingWorker | None = None
         self.batch_processing_thread: QThread | None = None
@@ -683,6 +159,16 @@ class MainWindow(QMainWindow):
         self.refresh_devices()
         self.refresh_meetings()
         self.refresh_review_center()
+
+        # Validate settings and warn on startup
+        issues = validate_settings(self.settings)
+        for issue in issues:
+            self.log(f"[Settings] {issue}")
+
+        # Service health checks (runs in background threads, updates sidebar)
+        self._service_statuses: dict[str, str] = {}
+        self._service_status_changed.connect(self._on_service_status_changed)
+        self._run_health_checks()
 
     def _build_ui(self) -> None:
         root = QWidget()
@@ -1006,6 +492,7 @@ class MainWindow(QMainWindow):
         self.speaker_filter.addItems(["Speakers", "You", "Meeting Audio"])
         self.pause_button = QPushButton("Pause")
         self.pause_button.setEnabled(False)
+        self.pause_button.clicked.connect(self.toggle_pause_recording)
         top.addWidget(self.speaker_filter)
         top.addWidget(self.pause_button)
         layout.addLayout(top)
@@ -3109,6 +2596,31 @@ class MainWindow(QMainWindow):
         if hasattr(self, "live_state_label"):
             self.live_state_label.setText(text)
 
+    def _run_health_checks(self) -> None:
+        check_services_async(self.settings, self._service_status_changed.emit)
+
+    @Slot(str, str)
+    def _on_service_status_changed(self, service: str, status: str) -> None:
+        self._service_statuses[service] = status
+        self._refresh_service_status_label()
+
+    def _refresh_service_status_label(self) -> None:
+        if not hasattr(self, "sidebar_services_label"):
+            return
+        parts = []
+        for name in ("Ollama", "WhisperLive"):
+            state = self._service_statuses.get(name, "unknown")
+            if state == "ok":
+                indicator = "✓"
+            elif state == "disabled":
+                indicator = "—"
+            elif state == "unreachable":
+                indicator = "✗"
+            else:
+                indicator = "?"
+            parts.append(f"{name} {indicator}")
+        self.sidebar_services_label.setText("  ·  ".join(parts))
+
     def _set_sidebar_status(self, state: str, detail: str, processing: bool = False) -> None:
         if hasattr(self, "sidebar_ready_label"):
             self.sidebar_ready_label.setText(state)
@@ -3423,6 +2935,8 @@ class MainWindow(QMainWindow):
         self.capture_mic_toggle.setEnabled(False)
         self.mark_important_button.setEnabled(True)
         self.add_note_button.setEnabled(True)
+        self.pause_button.setEnabled(True)
+        self.pause_button.setText("Pause")
         self.reprocess_button.setEnabled(False)
         if hasattr(self, "batch_reprocess_button"):
             self.batch_reprocess_button.setEnabled(False)
@@ -3514,11 +3028,30 @@ class MainWindow(QMainWindow):
             )
         return selected
 
+    def toggle_pause_recording(self) -> None:
+        if not self.worker:
+            return
+        if self.worker.is_paused:
+            self.worker.resume()
+            self.pause_button.setText("Pause")
+            self._set_live_capture_state("Recording")
+            self.orb.set_state("recording")
+            self.log("Recording resumed.")
+        else:
+            self.worker.pause()
+            self.pause_button.setText("Resume")
+            self._set_live_capture_state("Paused")
+            self.orb.set_state("idle")
+            self.log("Recording paused.")
+
     def stop_capture(self) -> None:
         if not self.worker:
             return
         if self.stop_requested:
             return
+        # Resume before stopping to unblock paused loops
+        if self.worker.is_paused:
+            self.worker.resume()
         self.stop_requested = True
         self.recording_button.setEnabled(False)
         self.recording_button.setText("Stopping...")
@@ -3552,6 +3085,8 @@ class MainWindow(QMainWindow):
         self.new_meeting_button.setEnabled(False)
         self.mark_important_button.setEnabled(False)
         self.add_note_button.setEnabled(False)
+        self.pause_button.setEnabled(False)
+        self.pause_button.setText("Pause")
         self.orb.set_state("processing")
         self._set_sidebar_status("Processing", "Preparing transcript", processing=True)
         self.status_label.setText("Processing")
@@ -3647,6 +3182,11 @@ class MainWindow(QMainWindow):
         save_settings(self.settings)
         self.update_settings_summary()
         self.log("Settings saved.")
+        # Re-validate and re-check service health after settings change
+        issues = validate_settings(self.settings)
+        for issue in issues:
+            self.log(f"[Settings] {issue}")
+        self._run_health_checks()
 
     def test_ollama_connection(self) -> None:
         url = self.settings_ollama_url.text().strip().rstrip("/")
@@ -3783,6 +3323,14 @@ class MainWindow(QMainWindow):
         return profile or "Unknown"
 
     def _start_processing(self, folder: Path, metadata: MeetingMetadata, mode: str = "full") -> None:
+        # If a job is already running, enqueue and return
+        if self.processing_thread is not None and self.processing_thread.isRunning():
+            self._processing_queue.append((folder, metadata, mode))
+            self.log(f"Processing queued: {metadata.title or folder.name} ({len(self._processing_queue)} pending)")
+            return
+        self._launch_processing_job(folder, metadata, mode)
+
+    def _launch_processing_job(self, folder: Path, metadata: MeetingMetadata, mode: str) -> None:
         self.processing_mode = mode
         if self.timer_phase != "processing":
             self.processing_started_at = datetime.now()
@@ -3834,6 +3382,8 @@ class MainWindow(QMainWindow):
         self.capture_mic_toggle.setEnabled(True)
         self.mark_important_button.setEnabled(False)
         self.add_note_button.setEnabled(False)
+        self.pause_button.setEnabled(False)
+        self.pause_button.setText("Pause")
         self.elapsed_timer.stop()
         self.timer_phase = "idle"
         self._set_elapsed_text("00:00:00")
@@ -3873,6 +3423,12 @@ class MainWindow(QMainWindow):
         if hasattr(self, "archive_status"):
             self.archive_status.setText("Processing complete")
         self.refresh_meetings()
+
+        # Drain the processing queue: start the next job if one is waiting
+        if self._processing_queue:
+            next_folder, next_metadata, next_mode = self._processing_queue.pop(0)
+            self.log(f"Starting queued processing job: {next_metadata.title or next_folder.name} ({len(self._processing_queue)} remaining)")
+            self._launch_processing_job(next_folder, next_metadata, next_mode)
 
     def refresh_meetings(self) -> None:
         if not hasattr(self, "meeting_table"):
@@ -4814,6 +4370,7 @@ class MainWindow(QMainWindow):
         evidence_layout.setContentsMargins(16, 14, 16, 14)
         evidence_layout.setSpacing(10)
         evidence_layout.addWidget(self._section_label("Meeting record"))
+        evidence_layout.addWidget(self._build_audio_player_bar(folder))
         evidence_tabs = QTabWidget()
         notes_view = QTextEdit()
         notes_view.setReadOnly(True)
@@ -4879,6 +4436,86 @@ class MainWindow(QMainWindow):
         layout.setRowStretch(1, 2)
         layout.setRowStretch(2, 3)
         return widget
+
+    def _build_audio_player_bar(self, folder: Path) -> QWidget:
+        bar = QFrame()
+        bar.setObjectName("RaisedPanel")
+        layout = QHBoxLayout(bar)
+        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setSpacing(10)
+
+        mic_path = folder / "mic.wav"
+        system_path = folder / "system.wav"
+
+        source_combo = QComboBox()
+        if mic_path.exists():
+            source_combo.addItem("Microphone", str(mic_path))
+        if system_path.exists():
+            source_combo.addItem("System Audio", str(system_path))
+
+        play_button = QPushButton("▶ Play")
+        play_button.setObjectName("SubtleActionButton")
+        play_button.setFixedWidth(90)
+        stop_button = QPushButton("■ Stop")
+        stop_button.setObjectName("SubtleActionButton")
+        stop_button.setFixedWidth(90)
+        status_label = self._muted_label("Select a track and press Play")
+        status_label.setFixedWidth(240)
+
+        if not mic_path.exists() and not system_path.exists():
+            layout.addWidget(self._muted_label("No audio files available for playback."))
+            return bar
+
+        def _play() -> None:
+            selected_path = source_combo.currentData()
+            if not selected_path:
+                return
+            try:
+                from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+                from PySide6.QtCore import QUrl
+            except ImportError:
+                status_label.setText("Qt Multimedia not available.")
+                return
+            if not hasattr(bar, "_player"):
+                bar._player = QMediaPlayer(bar)
+                bar._audio_out = QAudioOutput(bar)
+                bar._player.setAudioOutput(bar._audio_out)
+                bar._player.playbackStateChanged.connect(
+                    lambda state: play_button.setText("▶ Play" if state.name == "StoppedState" or state == 0 else "⏸ Pause")
+                )
+            player = bar._player
+            current_url = player.source().toLocalFile() if player.source().isValid() else ""
+            if current_url == selected_path and player.playbackState() == 1:
+                player.pause()
+                play_button.setText("▶ Play")
+                status_label.setText("Paused")
+                return
+            if current_url == selected_path and player.playbackState() == 2:
+                player.play()
+                play_button.setText("⏸ Pause")
+                status_label.setText(f"Playing: {Path(selected_path).name}")
+                return
+            player.setSource(QUrl.fromLocalFile(selected_path))
+            player.play()
+            play_button.setText("⏸ Pause")
+            status_label.setText(f"Playing: {Path(selected_path).name}")
+
+        def _stop() -> None:
+            if hasattr(bar, "_player"):
+                bar._player.stop()
+            play_button.setText("▶ Play")
+            status_label.setText("Stopped")
+
+        play_button.clicked.connect(_play)
+        stop_button.clicked.connect(_stop)
+
+        layout.addWidget(QLabel("Audio:"))
+        layout.addWidget(source_combo)
+        layout.addWidget(play_button)
+        layout.addWidget(stop_button)
+        layout.addWidget(status_label)
+        layout.addStretch()
+        return bar
 
     def _overview_status_card(self, metadata: MeetingMetadata, insights: MeetingInsights) -> QFrame:
         open_actions = sum(1 for item in insights.actions if item.status.lower() not in CLOSED_ACTION_STATUSES)

@@ -4,6 +4,7 @@ import html
 import json
 import re
 from dataclasses import asdict, dataclass, field
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
@@ -63,7 +64,7 @@ class MeetingInsights:
         }
 
 
-def build_insights_from_notes(notes_path: Path) -> MeetingInsights:
+def build_insights_from_notes(notes_path: Path, meeting_date: datetime | None = None) -> MeetingInsights:
     insights = MeetingInsights()
     if not notes_path.exists():
         insights.quality_warnings.append("No notes file found.")
@@ -96,13 +97,13 @@ def build_insights_from_notes(notes_path: Path) -> MeetingInsights:
             continue
 
         if section == "actions":
-            insights.actions.append(_parse_action(item_text))
+            insights.actions.append(_parse_action(item_text, meeting_date))
         elif section == "decisions":
             decision = _parse_decision(item_text)
             if decision:
                 insights.decisions.append(decision)
         elif section == "dates":
-            insights.dates.append(_parse_date(item_text))
+            insights.dates.append(_parse_date(item_text, meeting_date))
         elif section == "warnings":
             insights.warnings.append(InsightItem(kind="warning", text=item_text))
 
@@ -158,10 +159,12 @@ def load_or_build_insights(folder: Path) -> MeetingInsights:
     return insights
 
 
-def _parse_action(text: str) -> InsightItem:
+def _parse_action(text: str, meeting_date: datetime | None = None) -> InsightItem:
     fields = _field_map(text)
     task = fields.get("task") or _strip_known_fields(text)
-    due_date, inferred_confidence = _extract_trailing_confidence(fields.get("due", ""))
+    raw_due = fields.get("due", "")
+    due_date, inferred_confidence = _extract_trailing_confidence(raw_due)
+    due_date = _normalize_date_string(due_date, meeting_date)
     owner, owner_confidence = _extract_trailing_confidence(fields.get("owner", "Unknown"))
     task, task_confidence = _extract_trailing_confidence(task)
     return InsightItem(
@@ -187,14 +190,15 @@ def _parse_decision(text: str) -> InsightItem | None:
     )
 
 
-def _parse_date(text: str) -> InsightItem:
+def _parse_date(text: str, meeting_date: datetime | None = None) -> InsightItem:
     fields = _field_map(text)
-    date = fields.get("date") or fields.get("due") or ""
+    raw_date = fields.get("date") or fields.get("due") or ""
+    normalized_date = _normalize_date_string(raw_date, meeting_date)
     context, inferred_confidence = _extract_trailing_confidence(fields.get("context") or _strip_known_fields(text))
     return InsightItem(
         kind="date",
         text=context,
-        due_date=date,
+        due_date=normalized_date or raw_date,
         context=context,
         source=fields.get("source", ""),
         confidence=_normalize_confidence(fields.get("confidence", "") or inferred_confidence),
@@ -202,12 +206,20 @@ def _parse_date(text: str) -> InsightItem:
 
 
 def _field_map(text: str) -> dict[str, str]:
+    # Strip bold markdown (**Key:** → Key:) before splitting
+    text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
     fields: dict[str, str] = {}
-    for part in [part.strip() for part in text.split(";") if part.strip()]:
+    # Accept ; or | or newline as field delimiters
+    for part in re.split(r"[;|\n]+", text):
+        part = part.strip()
+        if not part:
+            continue
         if ":" not in part:
             continue
         key, value = part.split(":", 1)
-        fields[key.strip().lower()] = value.strip()
+        key = key.strip().lstrip("-* ").lower()
+        if key:
+            fields[key] = value.strip()
     return fields
 
 
@@ -259,6 +271,104 @@ def _extract_trailing_confidence(value: str) -> tuple[str, str]:
     cleaned = value[: match.start()].strip()
     confidence = "" if match.group(1).lower() == "unknown" else match.group(1)
     return cleaned, confidence
+
+
+_WEEKDAY_NAMES = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+_MONTH_NAMES = {
+    "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
+    "july": 7, "august": 8, "september": 9, "october": 10, "november": 11, "december": 12,
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "jun": 6, "jul": 7, "aug": 8,
+    "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+
+
+def _normalize_date_string(value: str, meeting_date: datetime | None) -> str:
+    """Resolve relative date strings to ISO 8601 (YYYY-MM-DD) when possible."""
+    if not value or not value.strip():
+        return value
+    cleaned = value.strip()
+    lower = cleaned.lower()
+
+    # Already absolute ISO date — leave it
+    if re.match(r"^\d{4}-\d{2}-\d{2}", cleaned):
+        return cleaned
+
+    base = meeting_date or datetime.now()
+
+    # "tomorrow"
+    if lower == "tomorrow":
+        return (base + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    # "today"
+    if lower == "today":
+        return base.strftime("%Y-%m-%d")
+
+    # "end of week" / "end of month"
+    if re.search(r"\bend of (this )?week\b", lower):
+        days_until_friday = (4 - base.weekday()) % 7
+        return (base + timedelta(days=days_until_friday or 7)).strftime("%Y-%m-%d")
+    if re.search(r"\bend of (this )?month\b", lower):
+        import calendar
+        last_day = calendar.monthrange(base.year, base.month)[1]
+        return base.replace(day=last_day).strftime("%Y-%m-%d")
+
+    # "next Monday" / "next Friday"
+    next_match = re.match(r"next\s+(\w+)", lower)
+    if next_match:
+        day_name = next_match.group(1).lower()
+        if day_name in _WEEKDAY_NAMES:
+            target_weekday = _WEEKDAY_NAMES.index(day_name)
+            days_ahead = (target_weekday - base.weekday()) % 7
+            days_ahead = days_ahead or 7  # "next" always means at least one week out
+            return (base + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
+
+    # "this Friday" / standalone weekday name
+    this_match = re.match(r"(?:this\s+)?(\w+day)$", lower)
+    if this_match:
+        day_name = this_match.group(1).lower()
+        if day_name in _WEEKDAY_NAMES:
+            target_weekday = _WEEKDAY_NAMES.index(day_name)
+            days_ahead = (target_weekday - base.weekday()) % 7
+            return (base + timedelta(days=days_ahead or 7)).strftime("%Y-%m-%d")
+
+    # "June 14" / "June 14th" / "June 14, 2025"
+    month_day = re.match(
+        r"(\w+)\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(\d{4}))?", cleaned, re.IGNORECASE
+    )
+    if month_day:
+        month_name = month_day.group(1).lower()
+        month_num = _MONTH_NAMES.get(month_name)
+        day_num = int(month_day.group(2))
+        year = int(month_day.group(3)) if month_day.group(3) else base.year
+        if month_num and 1 <= day_num <= 31:
+            try:
+                resolved = date(year, month_num, day_num)
+                # If no year was given and the date has passed, assume next year
+                if not month_day.group(3) and resolved < base.date():
+                    resolved = resolved.replace(year=year + 1)
+                return resolved.strftime("%Y-%m-%d")
+            except ValueError:
+                pass
+
+    # "Friday, June 14" / "Monday, June 17"
+    weekday_month_day = re.match(
+        r"\w+,?\s+(\w+)\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(\d{4}))?", cleaned, re.IGNORECASE
+    )
+    if weekday_month_day:
+        month_name = weekday_month_day.group(1).lower()
+        month_num = _MONTH_NAMES.get(month_name)
+        day_num = int(weekday_month_day.group(2))
+        year = int(weekday_month_day.group(3)) if weekday_month_day.group(3) else base.year
+        if month_num and 1 <= day_num <= 31:
+            try:
+                resolved = date(year, month_num, day_num)
+                if not weekday_month_day.group(3) and resolved < base.date():
+                    resolved = resolved.replace(year=year + 1)
+                return resolved.strftime("%Y-%m-%d")
+            except ValueError:
+                pass
+
+    return cleaned
 
 
 def _quality_warnings(insights: MeetingInsights) -> list[str]:

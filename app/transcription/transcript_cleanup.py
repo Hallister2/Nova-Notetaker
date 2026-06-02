@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from difflib import SequenceMatcher
 
+from app.core.glossary import COMMON_TRANSCRIPTION_CORRECTIONS
 from app.transcription.whisperlive_client import TranscriptionResult
 
 
@@ -95,6 +96,64 @@ def reduce_cross_bleed_for_profile(
         similarity_threshold=float(cleanup_settings["similarity_threshold"]),
         overlap_threshold=float(cleanup_settings["overlap_threshold"]),
     )
+
+
+def apply_glossary_corrections(results: list[TranscriptionResult], terms: list[str]) -> list[TranscriptionResult]:
+    """Apply deterministic find-replace corrections derived from the glossary.
+
+    Common Whisper mishearings (e.g. "AIDS" for "ADS", "GBO" for "GPO") are fixed
+    using the structured correction rules in COMMON_TRANSCRIPTION_CORRECTIONS.
+    Plain glossary terms are checked for case-insensitive whole-word matches and
+    re-cased to the canonical spelling.
+    """
+    if not results:
+        return results
+
+    correction_pairs = _parse_correction_rules(COMMON_TRANSCRIPTION_CORRECTIONS)
+    canonical_map = {term.lower(): term for term in terms}
+
+    corrected = []
+    for result in results:
+        if not result.success or not result.text.strip():
+            corrected.append(result)
+            continue
+        text = result.text
+        for wrong, right in correction_pairs:
+            text = re.sub(r"\b" + re.escape(wrong) + r"\b", right, text, flags=re.IGNORECASE)
+        # Re-case glossary terms to canonical spelling
+        for lower_term, canonical in canonical_map.items():
+            text = re.sub(
+                r"\b" + re.escape(lower_term) + r"\b",
+                canonical,
+                text,
+                flags=re.IGNORECASE,
+            )
+        corrected.append(TranscriptionResult(
+            source=result.source,
+            text=text,
+            success=result.success,
+            warning=result.warning,
+            details=result.details,
+        ))
+    return corrected
+
+
+def _parse_correction_rules(rules: list[str]) -> list[tuple[str, str]]:
+    """Extract (wrong, right) pairs from human-readable correction strings."""
+    pairs: list[tuple[str, str]] = []
+    for rule in rules:
+        # Pattern: "X may be transcribed as Y or Z"
+        match = re.match(r"^(.+?)\s+may be (?:transcribed|heard|confused with) as (.+?)(?:\s+in .+)?\.?$", rule, re.IGNORECASE)
+        if not match:
+            continue
+        canonical = match.group(1).strip()
+        alternatives_str = match.group(2).strip()
+        # Split on "or" / comma
+        alternatives = [a.strip().strip("\"'") for a in re.split(r"\s+or\s+|,\s*", alternatives_str)]
+        for alt in alternatives:
+            if alt and alt.lower() != canonical.lower():
+                pairs.append((alt, canonical))
+    return pairs
 
 
 def _matches_any(
