@@ -3,3 +3,6 @@ meetings/
 PackageApplication.ps1
 Nova Notetaker.spec
 NovaNotetaker.iss
+dist/
+build/
+build/Nova Notetaker/Nova Notetaker.pkg
