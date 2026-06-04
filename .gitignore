@@ -1,2 +1,5 @@
 meetings/
 .vscode/launch.json
+PackageApplication.ps1
+Nova Notetaker.spec
+NovaNotetaker.iss

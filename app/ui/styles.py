@@ -709,6 +709,37 @@ QScrollArea > QWidget > QWidget {{
 QDialog {{
     background-color: {t["app"]};
 }}
+
+QFrame#Toast {{
+    background-color: {t["raised"]};
+    border: 1px solid {t["border"]};
+    border-radius: 8px;
+    min-width: 240px;
+    max-width: 480px;
+}}
+
+QLabel#ToastIcon[kind="success"] {{ color: {t["success"]}; font-weight: 700; background-color: transparent; }}
+QLabel#ToastIcon[kind="info"] {{ color: {t["blue"]}; font-weight: 700; background-color: transparent; }}
+QLabel#ToastIcon[kind="warning"] {{ color: {t["orange"]}; font-weight: 700; background-color: transparent; }}
+QLabel#ToastIcon[kind="error"] {{ color: {t["recording"]}; font-weight: 700; background-color: transparent; }}
+
+QLabel#ToastMessage {{ color: {t["text"]}; font-size: 13px; background-color: transparent; }}
+
+QPushButton#ToastAction {{
+    background-color: transparent;
+    color: {t["orange"]};
+    border: 1px solid rgba(255, 138, 31, 0.38);
+    border-radius: 5px;
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 700;
+    min-width: 0;
+}}
+
+QPushButton#ToastAction:hover {{
+    background-color: rgba(255, 138, 31, 0.12);
+    border: 1px solid {t["orange"]};
+}}
 """
 
 

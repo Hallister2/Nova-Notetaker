@@ -15,6 +15,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "theme": "executive_dark",
         "selected_profile_id": "general",
         "selected_template_id": "standard",
+        "check_for_updates_on_startup": True,
     },
     "audio": {
         "mic_device_name": "",

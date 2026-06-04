@@ -1,18 +1,24 @@
 from __future__ import annotations
 
+import os
+import ssl
 import sys
+import tempfile
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QSize, QThread, Qt, QTimer, Signal
-from PySide6.QtGui import QCursor, QIcon, QPixmap
+from PySide6.QtCore import QObject, QSize, QThread, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QCursor, QDesktopServices, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMessageBox,
     QProgressBar,
     QPushButton,
     QSizePolicy,
@@ -42,6 +48,69 @@ from app.ui.tabs.templates_tab import TemplatesTabMixin
 from app.ui.tabs.settings_tab import SettingsTabMixin
 from app.ui.tabs.capture_tab import CaptureTabMixin
 from app.ui.tabs.overview_tab import OverviewTabMixin
+from app.core.update_checker import UpdateCheckResult, check_for_updates
+from app.ui.toast import ToastManager
+
+
+class _UpdateCheckWorker(QObject):
+    finished = Signal(bool, object, str, bool)  # (ok, result, error, is_manual)
+
+    def __init__(self, manual: bool, timeout: int = 5) -> None:
+        super().__init__()
+        self._manual = manual
+        self._timeout = timeout
+
+    def run(self) -> None:
+        try:
+            result = check_for_updates(timeout=self._timeout)
+        except Exception as exc:
+            self.finished.emit(False, None, str(exc), self._manual)
+            return
+        self.finished.emit(True, result, "", self._manual)
+
+
+class _DownloadWorker(QObject):
+    progress = Signal(int)
+    finished = Signal(bool, str)
+
+    _CHUNK = 65_536
+    _TIMEOUT = 60
+
+    def __init__(self, url: str, dest: str) -> None:
+        super().__init__()
+        self._url = url
+        self._dest = dest
+
+    def run(self) -> None:
+        try:
+            contexts: list[ssl.SSLContext] = [ssl.create_default_context()]
+            unverified = ssl.create_default_context()
+            unverified.check_hostname = False
+            unverified.verify_mode = ssl.CERT_NONE
+            contexts.append(unverified)
+            last_exc: BaseException | None = None
+            for ctx in contexts:
+                try:
+                    req = urllib.request.Request(self._url, headers={"User-Agent": "Nova-Notetaker"})
+                    with urllib.request.urlopen(req, context=ctx, timeout=self._TIMEOUT) as resp:
+                        total = int(resp.headers.get("Content-Length") or 0)
+                        downloaded = 0
+                        with open(self._dest, "wb") as fh:
+                            while True:
+                                chunk = resp.read(self._CHUNK)
+                                if not chunk:
+                                    break
+                                fh.write(chunk)
+                                downloaded += len(chunk)
+                                if total:
+                                    self.progress.emit(min(100, int(downloaded * 100 / total)))
+                    self.finished.emit(True, self._dest)
+                    return
+                except Exception as exc:
+                    last_exc = exc
+            self.finished.emit(False, str(last_exc))
+        except Exception as exc:
+            self.finished.emit(False, str(exc))
 
 
 class MainWindow(
@@ -125,6 +194,9 @@ class MainWindow(
         self._service_statuses: dict[str, str] = {}
         self._service_status_changed.connect(self._on_service_status_changed)
         self._run_health_checks()
+
+        self._toast = ToastManager(self)
+        self._schedule_startup_update_check()
 
     def _build_ui(self) -> None:
         root = QWidget()
@@ -521,10 +593,17 @@ class MainWindow(
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._apply_responsive_layout(event.size().width())
+        if hasattr(self, "_toast"):
+            self._toast._reposition()
 
     def closeEvent(self, event) -> None:
         for dialog in list(self.meeting_overview_windows):
             dialog.close()
+        for attr in ("_update_check_thread", "_download_thread"):
+            thread = getattr(self, attr, None)
+            if thread and thread.isRunning():
+                thread.quit()
+                thread.wait(1500)
         super().closeEvent(event)
 
     def _apply_responsive_layout(self, width: int) -> None:
@@ -601,6 +680,107 @@ class MainWindow(
 
     def open_settings(self) -> None:
         self._set_active_nav(8)
+
+    # --- Update check ---
+
+    def _on_update_startup_toggled(self, checked: bool) -> None:
+        self.settings.setdefault("app", {})["check_for_updates_on_startup"] = checked
+        save_settings(self.settings)
+
+    def _schedule_startup_update_check(self) -> None:
+        if not bool(self.settings.get("app", {}).get("check_for_updates_on_startup", True)):
+            return
+        QTimer.singleShot(1500, lambda: self._check_for_updates(manual=False))
+
+    def _check_for_updates(self, manual: bool) -> None:
+        thread = getattr(self, "_update_check_thread", None)
+        if thread and thread.isRunning():
+            if manual:
+                self.statusBar().showMessage("Update check already in progress.")
+            return
+        if manual:
+            self.statusBar().showMessage("Checking for updates…")
+        self._update_check_thread = QThread(self)
+        self._update_check_worker = _UpdateCheckWorker(manual=manual)
+        self._update_check_worker.moveToThread(self._update_check_thread)
+        self._update_check_thread.started.connect(self._update_check_worker.run)
+        self._update_check_worker.finished.connect(self._on_update_check_finished)
+        self._update_check_worker.finished.connect(self._update_check_thread.quit)
+        self._update_check_thread.finished.connect(self._update_check_worker.deleteLater)
+        self._update_check_thread.start()
+
+    def _on_update_check_finished(self, ok: bool, result: object, error: str, is_manual: bool) -> None:
+        if is_manual:
+            self.statusBar().clearMessage()
+        if not ok or result is None:
+            if is_manual:
+                self._toast.warning(error or "Unable to check for updates.")
+            return
+        result: UpdateCheckResult
+        if not result.release_found:
+            if is_manual:
+                self._toast.info("No releases published yet.")
+            return
+        if not result.is_update_available:
+            if is_manual:
+                self._toast.success(f"Nova Notetaker {result.current_version} is up to date.")
+            return
+        label = result.release_name or result.latest_version
+        if result.download_url:
+            self._toast.info_action(
+                f"{label} is available.",
+                "Download & Install",
+                lambda r=result: self._start_update_download(r),
+            )
+        else:
+            self._toast.info_action(
+                f"{label} is available.",
+                "View Release",
+                lambda url=result.release_url: QDesktopServices.openUrl(QUrl(url)),
+            )
+
+    def _start_update_download(self, result: UpdateCheckResult) -> None:
+        thread = getattr(self, "_download_thread", None)
+        if thread and thread.isRunning():
+            return
+        try:
+            dest_dir = tempfile.mkdtemp(prefix="nova_notetaker_update_")
+            dest_path = os.path.join(dest_dir, result.asset_name)
+        except OSError as exc:
+            self._toast.error(f"Could not create temp directory: {exc}")
+            return
+        self._download_version = result.latest_version
+        self._download_thread = QThread(self)
+        self._download_worker = _DownloadWorker(url=result.download_url, dest=dest_path)
+        self._download_worker.moveToThread(self._download_thread)
+        self._download_thread.started.connect(self._download_worker.run)
+        self._download_worker.progress.connect(self._on_download_progress)
+        self._download_worker.finished.connect(self._on_download_finished)
+        self._download_worker.finished.connect(self._download_thread.quit)
+        self._download_thread.finished.connect(self._download_worker.deleteLater)
+        self._download_thread.start()
+        self.statusBar().showMessage(f"Downloading Nova Notetaker {result.latest_version}…  0%")
+
+    def _on_download_progress(self, pct: int) -> None:
+        version = getattr(self, "_download_version", "")
+        self.statusBar().showMessage(f"Downloading Nova Notetaker {version}…  {pct}%")
+
+    def _on_download_finished(self, ok: bool, path_or_error: str) -> None:
+        self.statusBar().clearMessage()
+        if not ok:
+            self._toast.error(f"Download failed: {path_or_error}")
+            return
+        version = getattr(self, "_download_version", "")
+        reply = QMessageBox.question(
+            self,
+            "Install Update",
+            f"Nova Notetaker {version} downloaded.\nClose the app and launch the installer now?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        if reply == QMessageBox.Yes:
+            os.startfile(path_or_error)
+            QApplication.quit()
 
 
 def run_app() -> None:

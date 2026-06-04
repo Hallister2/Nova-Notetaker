@@ -183,6 +183,7 @@ class SettingsTabMixin:
             "Transcription",
         )
         settings_tabs.addTab(self._build_glossary_tab(), "Glossary")
+        settings_tabs.addTab(self._build_updates_tab(), "Updates")
         panel_layout.addWidget(settings_tabs, stretch=1)
 
         button_row = QHBoxLayout()
@@ -411,6 +412,46 @@ class SettingsTabMixin:
             return
         self._corrections_edit.setPlainText("\n".join(f"{w} → {r}" for w, r in DEFAULT_CORRECTION_PAIRS))
         self.log("Corrections reset to defaults.")
+
+    def _build_updates_tab(self) -> QWidget:
+        from app import __version__
+        widget = QWidget()
+        widget.setObjectName("Transparent")
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        section = QFrame()
+        section.setObjectName("FormSection")
+        fl = QFormLayout(section)
+        fl.setContentsMargins(16, 16, 16, 16)
+        fl.setLabelAlignment(Qt.AlignLeft)
+        fl.setHorizontalSpacing(18)
+        fl.setVerticalSpacing(12)
+
+        version_label = QLabel(__version__)
+        version_label.setObjectName("OrangeText")
+        fl.addRow("Current version", version_label)
+
+        check_btn = QPushButton("Check for Updates")
+        check_btn.setObjectName("PrimaryButton")
+        check_btn.setMinimumHeight(36)
+        check_btn.clicked.connect(lambda: self._check_for_updates(manual=True))
+        fl.addRow("", check_btn)
+
+        self.settings_update_on_startup_cb = QCheckBox("Check for updates automatically on startup")
+        self.settings_update_on_startup_cb.setChecked(
+            bool(self.settings.get("app", {}).get("check_for_updates_on_startup", True))
+        )
+        self.settings_update_on_startup_cb.toggled.connect(self._on_update_startup_toggled)
+        fl.addRow("", self.settings_update_on_startup_cb)
+
+        layout.addWidget(section)
+        layout.addWidget(self._muted_label(
+            "Update checks connect to GitHub releases. When an update is available, Nova Notetaker will download the installer and prompt you to close and install."
+        ))
+        layout.addStretch()
+        return widget
 
     def _settings_section(self, rows: list[tuple[str, QWidget]]) -> QFrame:
         section = QFrame()
