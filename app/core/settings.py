@@ -28,7 +28,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "provider": "ollama",
         "ollama_url": "http://localhost:11434",
         "ollama_model": "llama3.1:latest",
-        "openai_model": "gpt-5.2",
+        "openai_api_key": "",
+        "openai_model": "gpt-4o",
+        "claude_api_key": "",
+        "claude_model": "claude-opus-4-5",
         "timeout_seconds": 180,
     },
     "transcription": {
@@ -80,6 +83,8 @@ def validate_settings(settings: dict[str, Any]) -> list[str]:
     transcription = settings.get("transcription", {})
     audio = settings.get("audio", {})
 
+    provider = str(ai.get("provider", "ollama")).lower()
+
     ollama_url = str(ai.get("ollama_url", "")).strip()
     if ollama_url and not _is_valid_url(ollama_url):
         issues.append(f"AI: Ollama URL '{ollama_url}' does not look like a valid URL (expected http://host:port).")
@@ -88,9 +93,20 @@ def validate_settings(settings: dict[str, Any]) -> list[str]:
     if whisper_url and not _is_valid_url(whisper_url):
         issues.append(f"Transcription: WhisperLive URL '{whisper_url}' does not look like a valid URL.")
 
-    ollama_model = str(ai.get("ollama_model", "")).strip()
-    if not ollama_model:
-        issues.append("AI: Ollama model name is empty.")
+    if provider == "ollama":
+        ollama_model = str(ai.get("ollama_model", "")).strip()
+        if not ollama_model:
+            issues.append("AI: Ollama model name is empty.")
+    elif provider == "openai":
+        if not str(ai.get("openai_api_key", "")).strip():
+            issues.append("AI: OpenAI API key is not configured.")
+        if not str(ai.get("openai_model", "")).strip():
+            issues.append("AI: OpenAI model name is empty.")
+    elif provider == "claude":
+        if not str(ai.get("claude_api_key", "")).strip():
+            issues.append("AI: Claude API key is not configured.")
+        if not str(ai.get("claude_model", "")).strip():
+            issues.append("AI: Claude model name is empty.")
 
     whisper_model = str(transcription.get("model", "")).strip()
     if transcription.get("enabled") and whisper_model not in {"tiny", "base", "small", "medium", "large", "large-v2", "large-v3"}:

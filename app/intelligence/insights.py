@@ -75,16 +75,7 @@ def build_insights_from_notes(notes_path: Path, meeting_date: datetime | None = 
         line = _plain_note_text(raw_line).strip()
         lower = line.lower()
         if lower.startswith("## "):
-            if "action" in lower:
-                section = "actions"
-            elif "decision" in lower:
-                section = "decisions"
-            elif "date" in lower:
-                section = "dates"
-            elif "warning" in lower:
-                section = "warnings"
-            else:
-                section = ""
+            section = _section_to_category(lower)
             continue
 
         if not section or not line.startswith(("-", "*")):
@@ -369,6 +360,21 @@ def _normalize_date_string(value: str, meeting_date: datetime | None) -> str:
                 pass
 
     return cleaned
+
+
+_SECTION_ALIASES: dict[str, list[str]] = {
+    "actions": ["action", "task", "to-do", "todo", "next step", "follow-up", "followup", "commitment", "open item"],
+    "decisions": ["decision", "agreed", "agreement", "approval", "conclusion"],
+    "dates": ["date", "deadline", "timeline", "milestone", "schedule"],
+    "warnings": ["warning", "risk", "blocker", "concern", "open question", "issue"],
+}
+
+
+def _section_to_category(heading_lower: str) -> str:
+    for category, aliases in _SECTION_ALIASES.items():
+        if any(alias in heading_lower for alias in aliases):
+            return category
+    return ""
 
 
 def _quality_warnings(insights: MeetingInsights) -> list[str]:

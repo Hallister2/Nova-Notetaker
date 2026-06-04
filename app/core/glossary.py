@@ -7,6 +7,7 @@ from app.core.settings import CONFIG_DIR
 
 
 GLOSSARY_PATH = CONFIG_DIR / "glossary.json"
+CORRECTIONS_PATH = CONFIG_DIR / "corrections.json"
 
 DEFAULT_GLOSSARY_TERMS = [
     "Active Directory",
@@ -40,6 +41,40 @@ COMMON_TRANSCRIPTION_CORRECTIONS = [
     "UMI Documents may be transcribed as you my documents or View my documents.",
     "OU may be confused with group; preserve the uncertainty if the speaker corrects it.",
 ]
+
+
+DEFAULT_CORRECTION_PAIRS: list[tuple[str, str]] = [
+    ("APIs", "ADS"),
+    ("ABS", "ADS"),
+    ("GBO", "GPO"),
+    ("GBO projects", "GPO"),
+    ("photo redirection", "Folder Redirection"),
+    ("fighting chip", "Folder Redirection"),
+    ("documentary direction", "Folder Redirection"),
+    ("backbench redirection", "Folder Redirection"),
+    ("one drive", "OneDrive"),
+    ("one drop", "OneDrive"),
+    ("you my documents", "UMI Documents"),
+    ("View my documents", "UMI Documents"),
+]
+
+
+def load_correction_pairs(path: Path = CORRECTIONS_PATH) -> list[tuple[str, str]]:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        save_correction_pairs(DEFAULT_CORRECTION_PAIRS, path)
+        return list(DEFAULT_CORRECTION_PAIRS)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        pairs = [(str(item[0]), str(item[1])) for item in data if isinstance(item, (list, tuple)) and len(item) == 2]
+        return pairs if pairs else list(DEFAULT_CORRECTION_PAIRS)
+    except Exception:
+        return list(DEFAULT_CORRECTION_PAIRS)
+
+
+def save_correction_pairs(pairs: list[tuple[str, str]], path: Path = CORRECTIONS_PATH) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps([[w, r] for w, r in pairs], indent=2), encoding="utf-8")
 
 
 def load_glossary_terms(path: Path = GLOSSARY_PATH) -> list[str]:

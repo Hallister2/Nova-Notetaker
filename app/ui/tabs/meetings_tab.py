@@ -59,10 +59,10 @@ class MeetingsTabMixin:
             "No meetings yet",
             "Captured meetings will appear here after your first recording.",
         )
-        self.meeting_table = QTableWidget(0, 7)
+        self.meeting_table = QTableWidget(0, 8)
         self.meeting_table.setMinimumWidth(0)
         self.meeting_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.meeting_table.setHorizontalHeaderLabels(["Date", "Time", "Meeting Name", "Status", "Actions", "Review", "Open"])
+        self.meeting_table.setHorizontalHeaderLabels(["Date", "Time", "Duration", "Meeting Name", "Status", "Actions", "Review", "Open"])
         self._configure_table(self.meeting_table)
         self.meeting_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.meeting_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -74,15 +74,17 @@ class MeetingsTabMixin:
         header.setStretchLastSection(False)
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.Stretch)
-        header.setSectionResizeMode(3, QHeaderView.Fixed)
+        header.setSectionResizeMode(2, QHeaderView.Fixed)
+        header.setSectionResizeMode(3, QHeaderView.Stretch)
         header.setSectionResizeMode(4, QHeaderView.Fixed)
         header.setSectionResizeMode(5, QHeaderView.Fixed)
         header.setSectionResizeMode(6, QHeaderView.Fixed)
-        self.meeting_table.setColumnWidth(3, 150)
-        self.meeting_table.setColumnWidth(4, 76)
+        header.setSectionResizeMode(7, QHeaderView.Fixed)
+        self.meeting_table.setColumnWidth(2, 80)
+        self.meeting_table.setColumnWidth(4, 150)
         self.meeting_table.setColumnWidth(5, 76)
-        self.meeting_table.setColumnWidth(6, 112)
+        self.meeting_table.setColumnWidth(6, 76)
+        self.meeting_table.setColumnWidth(7, 112)
         self.meeting_table.verticalHeader().setDefaultSectionSize(50)
         filters = QHBoxLayout()
         filters.setSpacing(10)
@@ -109,6 +111,8 @@ class MeetingsTabMixin:
         self.rebuild_index_button.clicked.connect(self.rebuild_meeting_intelligence_index)
         self.open_folder_button = QPushButton("Open folder")
         self.open_folder_button.clicked.connect(self.open_selected_meeting_folder)
+        self.rename_meeting_button = QPushButton("Rename")
+        self.rename_meeting_button.clicked.connect(self.rename_selected_meeting)
         self.pin_meeting_button = QPushButton("Pin important")
         self.pin_meeting_button.clicked.connect(self.mark_selected_meeting_important)
         self.export_html_button = QPushButton("Export briefing")
@@ -124,6 +128,7 @@ class MeetingsTabMixin:
             self.batch_reprocess_button,
             self.rebuild_index_button,
             self.open_folder_button,
+            self.rename_meeting_button,
             self.pin_meeting_button,
             self.export_html_button,
             self.export_calendar_button,
@@ -201,6 +206,12 @@ class MeetingsTabMixin:
             if not self._meeting_matches_filter(folder, metadata, status, open_actions, review_count):
                 continue
 
+            audio_files = metadata.audio_files if metadata and isinstance(metadata.audio_files, dict) else {}
+            sys_dur = float((audio_files.get("system") or {}).get("duration_seconds") or 0)
+            mic_dur = float((audio_files.get("mic") or {}).get("duration_seconds") or 0)
+            duration_seconds = max(sys_dur, mic_dur)
+            duration_text = self._format_duration(duration_seconds) if duration_seconds > 0 else "—"
+
             row = self.meeting_table.rowCount()
             self.meeting_table.insertRow(row)
             transcript_path = folder / "transcript.md"
@@ -208,17 +219,18 @@ class MeetingsTabMixin:
                 MeetingProcessor._usable_existing_transcript_text(transcript_path.read_text(encoding="utf-8", errors="ignore")).strip()
             )
             status_label = self._meeting_status_label(status, review_count, has_transcript)
-            values = [date_text, time_text, title, status_label, str(open_actions), str(review_count)]
+            # columns: 0=Date 1=Time 2=Duration 3=MeetingName 4=Status(badge) 5=Actions 6=Review 7=Open
+            values = [date_text, time_text, duration_text, title, status_label, str(open_actions), str(review_count)]
             for column, value in enumerate(values):
-                display_value = "" if column == 3 else value
+                display_value = "" if column == 4 else value
                 item = SortableTableItem(display_value)
                 item.setData(Qt.UserRole, str(folder))
-                item.setData(Qt.UserRole + 1, self._meeting_sort_key(column, date_text, time_text, title, status, open_actions, review_count))
-                if column in (0, 1):
+                item.setData(Qt.UserRole + 1, self._meeting_sort_key(column, date_text, time_text, duration_seconds, title, status, open_actions, review_count))
+                if column in (0, 1, 2):
                     item.setTextAlignment(Qt.AlignCenter)
-                if column == 3:
+                if column == 4:
                     item.setTextAlignment(Qt.AlignCenter)
-                if column in (4, 5):
+                if column in (5, 6):
                     item.setTextAlignment(Qt.AlignCenter)
                 self.meeting_table.setItem(row, column, item)
 
@@ -227,7 +239,7 @@ class MeetingsTabMixin:
             status_layout = QHBoxLayout(status_cell)
             status_layout.setContentsMargins(6, 4, 6, 4)
             status_layout.addWidget(self._status_badge(status_label), alignment=Qt.AlignCenter)
-            self.meeting_table.setCellWidget(row, 3, status_cell)
+            self.meeting_table.setCellWidget(row, 4, status_cell)
 
             open_button = QPushButton("Open")
             open_button.setObjectName("TableActionButton")
@@ -237,13 +249,13 @@ class MeetingsTabMixin:
             open_item = SortableTableItem("")
             open_item.setData(Qt.UserRole, str(folder))
             open_item.setData(Qt.UserRole + 1, "")
-            self.meeting_table.setItem(row, 6, open_item)
+            self.meeting_table.setItem(row, 7, open_item)
             open_cell = QWidget()
             open_cell.setObjectName("Transparent")
             open_layout = QHBoxLayout(open_cell)
             open_layout.setContentsMargins(5, 5, 5, 5)
             open_layout.addWidget(open_button, alignment=Qt.AlignCenter)
-            self.meeting_table.setCellWidget(row, 6, open_cell)
+            self.meeting_table.setCellWidget(row, 7, open_cell)
             self.meeting_table.setRowHeight(row, 50)
 
             if current_folder and folder == current_folder:
@@ -251,10 +263,11 @@ class MeetingsTabMixin:
 
         self.meeting_table.setSortingEnabled(True)
         self.meeting_table.sortItems(0, Qt.DescendingOrder)
-        self.meeting_table.setColumnWidth(3, 172)
-        self.meeting_table.setColumnWidth(4, 92)
+        self.meeting_table.setColumnWidth(2, 80)
+        self.meeting_table.setColumnWidth(4, 172)
         self.meeting_table.setColumnWidth(5, 92)
-        self.meeting_table.setColumnWidth(6, 112)
+        self.meeting_table.setColumnWidth(6, 92)
+        self.meeting_table.setColumnWidth(7, 112)
         if self.meeting_table.rowCount() and self._selected_meeting_folder() is None:
             self.meeting_table.selectRow(0)
         if hasattr(self, "meetings_empty_state"):
@@ -458,23 +471,24 @@ class MeetingsTabMixin:
         column: int,
         date_text: str,
         time_text: str,
-        title: str,
-        status: str,
+        duration_seconds: float = 0.0,
+        title: str = "",
+        status: str = "",
         open_actions: int = 0,
         review_count: int = 0,
     ) -> str:
         full_timestamp = f"{date_text} {time_text}".strip()
-        if column == 0:
-            return full_timestamp
-        if column == 1:
+        if column in (0, 1):
             return full_timestamp
         if column == 2:
-            return title.lower()
+            return f"{duration_seconds:012.1f}"
         if column == 3:
-            return status.lower()
+            return title.lower()
         if column == 4:
-            return f"{open_actions:06d}"
+            return status.lower()
         if column == 5:
+            return f"{open_actions:06d}"
+        if column == 6:
             return f"{review_count:06d}"
         return ""
 
@@ -661,6 +675,13 @@ class MeetingsTabMixin:
         if folder.exists():
             make_writable(str(folder))
             os.rmdir(folder)
+
+    def rename_selected_meeting(self) -> None:
+        folder = self._selected_meeting_folder()
+        if folder is None:
+            QMessageBox.information(self, "Nova Notetaker", "Select a meeting to rename.")
+            return
+        self.rename_meeting(folder)
 
     def reprocess_selected_meeting(self) -> None:
         folder = self._selected_meeting_folder()

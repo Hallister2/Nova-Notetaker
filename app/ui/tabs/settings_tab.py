@@ -24,9 +24,19 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.core.glossary import (
+    load_correction_pairs, load_glossary_terms,
+    save_correction_pairs, save_glossary_terms,
+)
 from app.core.settings import save_settings, validate_settings
 from app.ui.constants import CAPTURE_PROFILES, DEFAULT_LOOPBACK_DEVICE, DEFAULT_MIC_DEVICE
 from app.ui.widgets import select_combo_by_data
+
+_PROVIDER_OPTIONS = [
+    ("Ollama (local)", "ollama"),
+    ("OpenAI / ChatGPT", "openai"),
+    ("Claude (Anthropic)", "claude"),
+]
 
 
 class SettingsTabMixin:
@@ -49,7 +59,7 @@ class SettingsTabMixin:
         title = QLabel("Settings")
         title.setObjectName("Title")
         panel_layout.addWidget(title)
-        panel_layout.addWidget(self._muted_label("Device, capture, WhisperLive, and Ollama settings."))
+        panel_layout.addWidget(self._muted_label("Device, capture, transcription, and AI intelligence settings."))
 
         self.settings_mic_combo = QComboBox()
         self.settings_loopback_combo = QComboBox()
@@ -58,14 +68,38 @@ class SettingsTabMixin:
             self.settings_profile_combo.addItem(label, value)
         select_combo_by_data(self.settings_profile_combo, self.settings["audio"].get("capture_profile", "laptop_speakers"))
 
+        # AI provider combo (data-driven so stored value stays lowercase)
         self.settings_provider_combo = QComboBox()
-        self.settings_provider_combo.addItems(["ollama", "openai"])
-        self.settings_provider_combo.setCurrentText(self.settings["ai"].get("provider", "ollama"))
+        for label, value in _PROVIDER_OPTIONS:
+            self.settings_provider_combo.addItem(label, value)
+        current_provider = self.settings["ai"].get("provider", "ollama")
+        select_combo_by_data(self.settings_provider_combo, current_provider)
+
+        # Ollama fields
         self.settings_ollama_url = QLineEdit(self.settings["ai"].get("ollama_url", ""))
+        self.settings_ollama_url.setPlaceholderText("Example: http://192.168.200.2:11434")
         self.settings_ollama_model = QLineEdit(self.settings["ai"].get("ollama_model", ""))
+        self.settings_ollama_model.setPlaceholderText("Example: llama3.1:latest")
+
+        # OpenAI fields
+        self.settings_openai_api_key = QLineEdit(self.settings["ai"].get("openai_api_key", ""))
+        self.settings_openai_api_key.setPlaceholderText("sk-...")
+        self.settings_openai_api_key.setEchoMode(QLineEdit.Password)
+        self.settings_openai_model = QLineEdit(self.settings["ai"].get("openai_model", "gpt-4o"))
+        self.settings_openai_model.setPlaceholderText("Example: gpt-4o")
+
+        # Claude fields
+        self.settings_claude_api_key = QLineEdit(self.settings["ai"].get("claude_api_key", ""))
+        self.settings_claude_api_key.setPlaceholderText("sk-ant-...")
+        self.settings_claude_api_key.setEchoMode(QLineEdit.Password)
+        self.settings_claude_model = QLineEdit(self.settings["ai"].get("claude_model", "claude-opus-4-5"))
+        self.settings_claude_model.setPlaceholderText("Example: claude-opus-4-5")
+
+        # Shared AI field
         self.settings_ai_timeout = QSpinBox()
         self.settings_ai_timeout.setRange(10, 1800)
         self.settings_ai_timeout.setValue(int(self.settings["ai"].get("timeout_seconds", 180)))
+
         self.settings_action_auto_close_days = QSpinBox()
         self.settings_action_auto_close_days.setRange(0, 3650)
         self.settings_action_auto_close_days.setValue(int(self.settings.get("review", {}).get("action_auto_close_days", 30)))
@@ -73,8 +107,11 @@ class SettingsTabMixin:
         self.settings_transcription_enabled = QCheckBox("WhisperLive enabled")
         self.settings_transcription_enabled.setChecked(bool(self.settings["transcription"].get("enabled", False)))
         self.settings_whisper_url = QLineEdit(self.settings["transcription"].get("whisperlive_url", ""))
+        self.settings_whisper_url.setPlaceholderText("Example: http://192.168.200.2:9090")
         self.settings_whisper_model = QLineEdit(self.settings["transcription"].get("model", "small"))
+        self.settings_whisper_model.setPlaceholderText("Example: small")
         self.settings_whisper_language = QLineEdit(self.settings["transcription"].get("language", "en"))
+        self.settings_whisper_language.setPlaceholderText("Example: en")
         self.settings_use_vad = QCheckBox("Use VAD")
         self.settings_use_vad.setChecked(bool(self.settings["transcription"].get("use_vad", True)))
         self.settings_cross_bleed_cleanup = QCheckBox("Speaker-bleed cleanup")
@@ -93,6 +130,10 @@ class SettingsTabMixin:
             self.settings_provider_combo,
             self.settings_ollama_url,
             self.settings_ollama_model,
+            self.settings_openai_api_key,
+            self.settings_openai_model,
+            self.settings_claude_api_key,
+            self.settings_claude_model,
             self.settings_ai_timeout,
             self.settings_action_auto_close_days,
             self.settings_transcription_enabled,
@@ -106,12 +147,6 @@ class SettingsTabMixin:
         ):
             control.setMinimumHeight(36)
 
-        self.settings_ollama_model.setPlaceholderText("Example: llama3.1:latest")
-        self.settings_whisper_model.setPlaceholderText("Example: small")
-        self.settings_whisper_language.setPlaceholderText("Example: en")
-        self.settings_ollama_url.setPlaceholderText("Example: http://192.168.200.2:11434")
-        self.settings_whisper_url.setPlaceholderText("Example: http://192.168.200.2:9090")
-
         settings_tabs = QTabWidget()
         settings_tabs.addTab(
             self._settings_section(
@@ -123,17 +158,7 @@ class SettingsTabMixin:
             ),
             "Device capture",
         )
-        settings_tabs.addTab(
-            self._settings_section(
-                [
-                    ("AI provider", self._setting_with_hint(self.settings_provider_combo, "Ollama is currently wired for local note generation. OpenAI is reserved for a later provider pass.")),
-                    ("Ollama URL", self._setting_with_hint(self.settings_ollama_url, "Base URL for your Ollama server. Use the same address you use for Ollama API calls.")),
-                    ("Ollama model", self._setting_with_hint(self.settings_ollama_model, "Any installed Ollama model name works here. Run `ollama list` on the Ollama host to see available models.", visible=True)),
-                    ("AI timeout", self._setting_with_hint(self.settings_ai_timeout, "Maximum seconds to wait for notes generation before Nova treats it as failed.")),
-                ]
-            ),
-            "Intelligence",
-        )
+        settings_tabs.addTab(self._build_intelligence_tab(), "Intelligence")
         settings_tabs.addTab(
             self._settings_section(
                 [
@@ -157,6 +182,7 @@ class SettingsTabMixin:
             ),
             "Transcription",
         )
+        settings_tabs.addTab(self._build_glossary_tab(), "Glossary")
         panel_layout.addWidget(settings_tabs, stretch=1)
 
         button_row = QHBoxLayout()
@@ -165,8 +191,6 @@ class SettingsTabMixin:
         self.settings_refresh_devices_button.clicked.connect(self.refresh_devices)
         self.settings_preflight_button = QPushButton("Run preflight")
         self.settings_preflight_button.clicked.connect(self.run_capture_preflight)
-        self.settings_test_ollama_button = QPushButton("Test Ollama")
-        self.settings_test_ollama_button.clicked.connect(self.test_ollama_connection)
         self.settings_test_whisper_button = QPushButton("Test WhisperLive")
         self.settings_test_whisper_button.clicked.connect(self.test_whisperlive_connection)
         self.settings_button = QPushButton("Save settings")
@@ -175,7 +199,6 @@ class SettingsTabMixin:
         for button in (
             self.settings_refresh_devices_button,
             self.settings_preflight_button,
-            self.settings_test_ollama_button,
             self.settings_test_whisper_button,
             self.settings_button,
         ):
@@ -183,7 +206,6 @@ class SettingsTabMixin:
             button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         button_row.addWidget(self.settings_refresh_devices_button)
         button_row.addWidget(self.settings_preflight_button)
-        button_row.addWidget(self.settings_test_ollama_button)
         button_row.addWidget(self.settings_test_whisper_button)
         button_row.addStretch()
         button_row.addWidget(self.settings_button)
@@ -193,6 +215,202 @@ class SettingsTabMixin:
         scroll.setWidget(panel)
         layout.addWidget(scroll)
         return page
+
+    def _build_intelligence_tab(self) -> QWidget:
+        widget = QWidget()
+        widget.setObjectName("Transparent")
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        # Provider selector — always visible
+        provider_form = QFrame()
+        provider_form.setObjectName("FormSection")
+        provider_fl = QFormLayout(provider_form)
+        provider_fl.setContentsMargins(0, 0, 0, 0)
+        provider_fl.setLabelAlignment(Qt.AlignLeft)
+        provider_fl.setHorizontalSpacing(18)
+        provider_fl.setVerticalSpacing(10)
+        provider_fl.addRow("AI provider", self._setting_with_hint(
+            self.settings_provider_combo,
+            "Choose your AI backend for generating meeting notes. Each provider needs its own credentials or server URL.",
+            visible=True,
+        ))
+        layout.addWidget(provider_form)
+
+        # --- Ollama section ---
+        self._ollama_section = self._provider_section([
+            ("Ollama URL", self._setting_with_hint(self.settings_ollama_url, "Base URL for your Ollama server.")),
+            ("Ollama model", self._setting_with_hint(self.settings_ollama_model, "Run `ollama list` on the Ollama host to see installed models.", visible=True)),
+        ], test_label="Test Ollama", test_slot=self.test_ollama_connection)
+        layout.addWidget(self._ollama_section)
+
+        # --- OpenAI section ---
+        self._openai_section = self._provider_section([
+            ("API key", self._setting_with_hint(self.settings_openai_api_key, "Your OpenAI API key (starts with sk-). Stored locally in settings.json.")),
+            ("Model", self._setting_with_hint(self.settings_openai_model, "Model name, e.g. gpt-4o, gpt-4-turbo, gpt-3.5-turbo.", visible=True)),
+        ], test_label="Test OpenAI", test_slot=self.test_openai_connection)
+        layout.addWidget(self._openai_section)
+
+        # --- Claude section ---
+        self._claude_section = self._provider_section([
+            ("API key", self._setting_with_hint(self.settings_claude_api_key, "Your Anthropic API key (starts with sk-ant-). Stored locally in settings.json.")),
+            ("Model", self._setting_with_hint(self.settings_claude_model, "Model name, e.g. claude-opus-4-5, claude-sonnet-4-6, claude-haiku-4-5.", visible=True)),
+        ], test_label="Test Claude", test_slot=self.test_claude_connection)
+        layout.addWidget(self._claude_section)
+
+        # Shared timeout — always visible
+        timeout_form = QFrame()
+        timeout_form.setObjectName("FormSection")
+        timeout_fl = QFormLayout(timeout_form)
+        timeout_fl.setContentsMargins(0, 0, 0, 0)
+        timeout_fl.setLabelAlignment(Qt.AlignLeft)
+        timeout_fl.setHorizontalSpacing(18)
+        timeout_fl.setVerticalSpacing(10)
+        timeout_fl.addRow("AI timeout (s)", self._setting_with_hint(
+            self.settings_ai_timeout,
+            "Maximum seconds to wait for notes generation before Nova treats it as failed.",
+        ))
+        layout.addWidget(timeout_form)
+        layout.addStretch()
+
+        self._apply_provider_visibility(self.settings_provider_combo.currentData() or "ollama")
+        self.settings_provider_combo.currentIndexChanged.connect(
+            lambda _: self._apply_provider_visibility(self.settings_provider_combo.currentData() or "ollama")
+        )
+        return widget
+
+    def _provider_section(self, rows: list[tuple[str, QWidget]], test_label: str, test_slot) -> QFrame:
+        frame = QFrame()
+        frame.setObjectName("FormSection")
+        fl = QFormLayout(frame)
+        fl.setContentsMargins(0, 8, 0, 8)
+        fl.setLabelAlignment(Qt.AlignLeft)
+        fl.setHorizontalSpacing(18)
+        fl.setVerticalSpacing(10)
+        for label, control in rows:
+            fl.addRow(label, control)
+        test_button = QPushButton(test_label)
+        test_button.setMinimumHeight(36)
+        test_button.clicked.connect(test_slot)
+        fl.addRow("", test_button)
+        return frame
+
+    def _apply_provider_visibility(self, provider: str) -> None:
+        self._ollama_section.setVisible(provider == "ollama")
+        self._openai_section.setVisible(provider == "openai")
+        self._claude_section.setVisible(provider == "claude")
+
+    def _build_glossary_tab(self) -> QWidget:
+        from PySide6.QtWidgets import QSplitter, QTextEdit
+        widget = QWidget()
+        widget.setObjectName("Transparent")
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        splitter = QSplitter(Qt.Vertical)
+
+        # --- Terms pane ---
+        terms_frame = QFrame()
+        terms_frame.setObjectName("Transparent")
+        terms_layout = QVBoxLayout(terms_frame)
+        terms_layout.setContentsMargins(0, 0, 0, 0)
+        terms_layout.setSpacing(6)
+        terms_layout.addWidget(self._section_label("Domain vocabulary"))
+        terms_layout.addWidget(self._muted_label(
+            "Terms injected into the AI prompt to reinforce correct spelling of domain-specific words. One term per line."
+        ))
+        self._glossary_edit = QTextEdit()
+        self._glossary_edit.setPlaceholderText("Active Directory\nGPO\nOneDrive")
+        self._glossary_edit.setPlainText("\n".join(load_glossary_terms()))
+        terms_layout.addWidget(self._glossary_edit)
+        terms_btn_row = QHBoxLayout()
+        save_terms_btn = QPushButton("Save terms")
+        save_terms_btn.setObjectName("PrimaryButton")
+        save_terms_btn.setMinimumHeight(34)
+        save_terms_btn.clicked.connect(self._save_glossary)
+        reset_terms_btn = QPushButton("Reset to defaults")
+        reset_terms_btn.setMinimumHeight(34)
+        reset_terms_btn.clicked.connect(self._reset_glossary_to_defaults)
+        terms_btn_row.addWidget(save_terms_btn)
+        terms_btn_row.addWidget(reset_terms_btn)
+        terms_btn_row.addStretch()
+        terms_layout.addLayout(terms_btn_row)
+        splitter.addWidget(terms_frame)
+
+        # --- Corrections pane ---
+        corr_frame = QFrame()
+        corr_frame.setObjectName("Transparent")
+        corr_layout = QVBoxLayout(corr_frame)
+        corr_layout.setContentsMargins(0, 0, 0, 0)
+        corr_layout.setSpacing(6)
+        corr_layout.addWidget(self._section_label("Transcription corrections"))
+        corr_layout.addWidget(self._muted_label(
+            "Applied before AI notes generation to fix common mishearings. Format: wrong word → correct word, one per line."
+        ))
+        self._corrections_edit = QTextEdit()
+        self._corrections_edit.setPlaceholderText("APIs → ADS\nGBO → GPO\none drive → OneDrive")
+        pairs = load_correction_pairs()
+        self._corrections_edit.setPlainText("\n".join(f"{w} → {r}" for w, r in pairs))
+        corr_layout.addWidget(self._corrections_edit)
+        corr_btn_row = QHBoxLayout()
+        save_corr_btn = QPushButton("Save corrections")
+        save_corr_btn.setObjectName("PrimaryButton")
+        save_corr_btn.setMinimumHeight(34)
+        save_corr_btn.clicked.connect(self._save_corrections)
+        reset_corr_btn = QPushButton("Reset to defaults")
+        reset_corr_btn.setMinimumHeight(34)
+        reset_corr_btn.clicked.connect(self._reset_corrections_to_defaults)
+        corr_btn_row.addWidget(save_corr_btn)
+        corr_btn_row.addWidget(reset_corr_btn)
+        corr_btn_row.addStretch()
+        corr_layout.addLayout(corr_btn_row)
+        splitter.addWidget(corr_frame)
+
+        layout.addWidget(splitter, stretch=1)
+        return widget
+
+    def _save_glossary(self) -> None:
+        if not hasattr(self, "_glossary_edit"):
+            return
+        terms = [line.strip() for line in self._glossary_edit.toPlainText().splitlines() if line.strip()]
+        save_glossary_terms(terms)
+        self.log(f"Glossary saved: {len(terms)} term(s).")
+        QMessageBox.information(self, "Nova Notetaker", f"Glossary saved with {len(terms)} term(s).")
+
+    def _reset_glossary_to_defaults(self) -> None:
+        from app.core.glossary import DEFAULT_GLOSSARY_TERMS
+        if not hasattr(self, "_glossary_edit"):
+            return
+        self._glossary_edit.setPlainText("\n".join(DEFAULT_GLOSSARY_TERMS))
+        self.log("Glossary terms reset to defaults.")
+
+    def _save_corrections(self) -> None:
+        if not hasattr(self, "_corrections_edit"):
+            return
+        pairs: list[tuple[str, str]] = []
+        for line in self._corrections_edit.toPlainText().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            for sep in (" → ", " -> ", "→", "->"):
+                if sep in line:
+                    wrong, _, right = line.partition(sep)
+                    w, r = wrong.strip(), right.strip()
+                    if w and r:
+                        pairs.append((w, r))
+                    break
+        save_correction_pairs(pairs)
+        self.log(f"Corrections saved: {len(pairs)} pair(s).")
+        QMessageBox.information(self, "Nova Notetaker", f"Corrections saved with {len(pairs)} pair(s).")
+
+    def _reset_corrections_to_defaults(self) -> None:
+        from app.core.glossary import DEFAULT_CORRECTION_PAIRS
+        if not hasattr(self, "_corrections_edit"):
+            return
+        self._corrections_edit.setPlainText("\n".join(f"{w} → {r}" for w, r in DEFAULT_CORRECTION_PAIRS))
+        self.log("Corrections reset to defaults.")
 
     def _settings_section(self, rows: list[tuple[str, QWidget]]) -> QFrame:
         section = QFrame()
@@ -246,9 +464,13 @@ class SettingsTabMixin:
         self.settings["audio"]["mic_device_name"] = str(self.settings_mic_combo.currentData() or "")
         self.settings["audio"]["system_loopback_device_name"] = str(self.settings_loopback_combo.currentData() or "")
         self.settings["audio"]["capture_profile"] = str(self.settings_profile_combo.currentData() or "external_mic_speakers")
-        self.settings["ai"]["provider"] = self.settings_provider_combo.currentText()
+        self.settings["ai"]["provider"] = str(self.settings_provider_combo.currentData() or "ollama")
         self.settings["ai"]["ollama_url"] = self.settings_ollama_url.text().strip()
         self.settings["ai"]["ollama_model"] = self.settings_ollama_model.text().strip()
+        self.settings["ai"]["openai_api_key"] = self.settings_openai_api_key.text().strip()
+        self.settings["ai"]["openai_model"] = self.settings_openai_model.text().strip()
+        self.settings["ai"]["claude_api_key"] = self.settings_claude_api_key.text().strip()
+        self.settings["ai"]["claude_model"] = self.settings_claude_model.text().strip()
         self.settings["ai"]["timeout_seconds"] = self.settings_ai_timeout.value()
         self.settings.setdefault("review", {})["action_auto_close_days"] = self.settings_action_auto_close_days.value()
         self.settings["transcription"]["enabled"] = self.settings_transcription_enabled.isChecked()
@@ -290,6 +512,60 @@ class SettingsTabMixin:
             QMessageBox.warning(self, "Ollama Test", f"Ollama test failed:\n{error}")
             self.log(f"Ollama test failed: {error}")
 
+    def test_openai_connection(self) -> None:
+        api_key = self.settings_openai_api_key.text().strip()
+        model = self.settings_openai_model.text().strip()
+        if not api_key:
+            QMessageBox.warning(self, "Nova Notetaker", "Enter an OpenAI API key before testing.")
+            return
+        try:
+            response = requests.get(
+                "https://api.openai.com/v1/models",
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=10,
+            )
+            if response.status_code == 401:
+                QMessageBox.warning(self, "OpenAI Test", "API key is invalid or unauthorized.")
+                self.log("OpenAI test failed: unauthorized.")
+                return
+            response.raise_for_status()
+            model_ids = [item.get("id", "") for item in response.json().get("data", []) if isinstance(item, dict)]
+            model_message = f"Model found: {model}" if model in model_ids else f"Model '{model}' not listed (may still work)."
+            if not model:
+                model_message = "No model configured."
+            QMessageBox.information(self, "OpenAI Test", f"OpenAI API is reachable.\n{model_message}")
+            self.log(f"OpenAI test succeeded. {model_message}")
+        except Exception as error:
+            QMessageBox.warning(self, "OpenAI Test", f"OpenAI test failed:\n{error}")
+            self.log(f"OpenAI test failed: {error}")
+
+    def test_claude_connection(self) -> None:
+        api_key = self.settings_claude_api_key.text().strip()
+        model = self.settings_claude_model.text().strip()
+        if not api_key:
+            QMessageBox.warning(self, "Nova Notetaker", "Enter a Claude API key before testing.")
+            return
+        try:
+            response = requests.get(
+                "https://api.anthropic.com/v1/models",
+                headers={"x-api-key": api_key, "anthropic-version": "2023-06-01"},
+                timeout=10,
+            )
+            if response.status_code == 401:
+                QMessageBox.warning(self, "Claude Test", "API key is invalid or unauthorized.")
+                self.log("Claude test failed: unauthorized.")
+                return
+            response.raise_for_status()
+            model_ids = [item.get("id", "") for item in response.json().get("data", []) if isinstance(item, dict)]
+            model_message = f"Model found: {model}" if model in model_ids else f"Model '{model}' not listed (may still work)."
+            if not model:
+                model_message = "No model configured."
+            QMessageBox.information(self, "Claude Test", f"Claude API is reachable.\n{model_message}")
+            self.log(f"Claude test succeeded. {model_message}")
+        except Exception as error:
+            QMessageBox.warning(self, "Claude Test", f"Claude test failed:\n{error}")
+            self.log(f"Claude test failed: {error}")
+
     def test_whisperlive_connection(self) -> None:
         url = self.settings_whisper_url.text().strip().rstrip("/")
         if not url:
@@ -328,19 +604,35 @@ class SettingsTabMixin:
         except Exception as error:
             checks.append(("Meeting storage", False, str(error)))
 
-        ollama_url = self.settings_ollama_url.text().strip().rstrip("/") if hasattr(self, "settings_ollama_url") else self.settings["ai"].get("ollama_url", "")
-        ollama_model = self.settings_ollama_model.text().strip() if hasattr(self, "settings_ollama_model") else self.settings["ai"].get("ollama_model", "")
-        try:
-            response = requests.get(f"{ollama_url}/api/tags", timeout=5)
-            response.raise_for_status()
-            models = [item.get("name", "") for item in response.json().get("models", []) if isinstance(item, dict)]
-            model_ok = not ollama_model or ollama_model in models
-            detail = f"{ollama_model} found" if model_ok and ollama_model else "Reachable"
-            if ollama_model and not model_ok:
-                detail = f"{ollama_model} not found"
-            checks.append(("Ollama", model_ok, detail))
-        except Exception as error:
-            checks.append(("Ollama", False, str(error)))
+        provider = str(self.settings_provider_combo.currentData() or "ollama")
+        if provider == "ollama":
+            ollama_url = self.settings_ollama_url.text().strip().rstrip("/") if hasattr(self, "settings_ollama_url") else self.settings["ai"].get("ollama_url", "")
+            ollama_model = self.settings_ollama_model.text().strip() if hasattr(self, "settings_ollama_model") else self.settings["ai"].get("ollama_model", "")
+            try:
+                response = requests.get(f"{ollama_url}/api/tags", timeout=5)
+                response.raise_for_status()
+                models = [item.get("name", "") for item in response.json().get("models", []) if isinstance(item, dict)]
+                model_ok = not ollama_model or ollama_model in models
+                detail = f"{ollama_model} found" if model_ok and ollama_model else "Reachable"
+                if ollama_model and not model_ok:
+                    detail = f"{ollama_model} not found"
+                checks.append(("Ollama", model_ok, detail))
+            except Exception as error:
+                checks.append(("Ollama", False, str(error)))
+        elif provider == "openai":
+            api_key = self.settings_openai_api_key.text().strip() if hasattr(self, "settings_openai_api_key") else self.settings["ai"].get("openai_api_key", "")
+            try:
+                response = requests.get("https://api.openai.com/v1/models", headers={"Authorization": f"Bearer {api_key}"}, timeout=5)
+                checks.append(("OpenAI", response.status_code == 200, "Reachable" if response.status_code == 200 else f"HTTP {response.status_code}"))
+            except Exception as error:
+                checks.append(("OpenAI", False, str(error)))
+        elif provider == "claude":
+            api_key = self.settings_claude_api_key.text().strip() if hasattr(self, "settings_claude_api_key") else self.settings["ai"].get("claude_api_key", "")
+            try:
+                response = requests.get("https://api.anthropic.com/v1/models", headers={"x-api-key": api_key, "anthropic-version": "2023-06-01"}, timeout=5)
+                checks.append(("Claude", response.status_code == 200, "Reachable" if response.status_code == 200 else f"HTTP {response.status_code}"))
+            except Exception as error:
+                checks.append(("Claude", False, str(error)))
 
         whisper_enabled = self.settings_transcription_enabled.isChecked() if hasattr(self, "settings_transcription_enabled") else bool(self.settings["transcription"].get("enabled", False))
         if whisper_enabled:
@@ -375,14 +667,15 @@ class SettingsTabMixin:
         meeting_profile_name = self._selected_meeting_profile().name if hasattr(self, "profile_combo") else "General Meeting"
         template_name = self._selected_note_template().name if hasattr(self, "template_combo") else "Standard Meeting Notes"
         provider = self.settings["ai"].get("provider", "ollama")
+        provider_display = {"ollama": "Ollama", "openai": "OpenAI", "claude": "Claude"}.get(provider, provider)
         whisper = "on" if self.settings["transcription"].get("enabled", False) else "off"
         mic_state = "on" if self.settings["audio"].get("capture_mic", True) else "muted"
         self.settings_summary.setText(
-            f"Mic {mic_state}  |  System: {system_name}  |  Audio: {profile}  |  Meeting: {meeting_profile_name}  |  Template: {template_name}  |  {provider} / WhisperLive {whisper}"
+            f"Mic {mic_state}  |  System: {system_name}  |  Audio: {profile}  |  Meeting: {meeting_profile_name}  |  Template: {template_name}  |  {provider_display} / WhisperLive {whisper}"
         )
         if hasattr(self, "footer_transcription_label"):
             self.footer_transcription_label.setText(f"Transcription: WhisperLive {whisper}")
         if hasattr(self, "footer_intelligence_label"):
-            self.footer_intelligence_label.setText(f"Intelligence: {provider}")
+            self.footer_intelligence_label.setText(f"Intelligence: {provider_display}")
         if hasattr(self, "sidebar_services_label"):
-            self.sidebar_services_label.setText(f"Ollama  -  WhisperLive {whisper}")
+            self.sidebar_services_label.setText(f"{provider_display}  -  WhisperLive")

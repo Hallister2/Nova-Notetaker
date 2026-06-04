@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from difflib import SequenceMatcher
 
-from app.core.glossary import COMMON_TRANSCRIPTION_CORRECTIONS
+from app.core.glossary import COMMON_TRANSCRIPTION_CORRECTIONS, load_correction_pairs
 from app.transcription.whisperlive_client import TranscriptionResult
 
 
@@ -109,7 +109,7 @@ def apply_glossary_corrections(results: list[TranscriptionResult], terms: list[s
     if not results:
         return results
 
-    correction_pairs = _parse_correction_rules(COMMON_TRANSCRIPTION_CORRECTIONS)
+    correction_pairs = load_correction_pairs()
     canonical_map = {term.lower(): term for term in terms}
 
     corrected = []

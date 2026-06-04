@@ -52,10 +52,17 @@ class OverviewTabMixin:
         self.overview_workspace_layout.addWidget(self.overview_workspace_empty, stretch=1)
         return page
 
+    def _force_refresh_workspace(self, folder: Path) -> None:
+        self.overview_workspace_folder = None
+        self.open_meeting_workspace(folder)
+
     def open_meeting_workspace(self, folder: Path | None = None) -> None:
         folder = folder or self._selected_meeting_folder()
         if folder is None:
             QMessageBox.information(self, "Nova Notetaker", "Select a meeting to open.")
+            return
+        if folder == self.overview_workspace_folder:
+            self._set_active_nav(2)
             return
         try:
             metadata = self.meeting_store.read_metadata(folder)
@@ -89,10 +96,19 @@ class OverviewTabMixin:
         popout_button.clicked.connect(lambda: self.open_meeting_overview(folder))
         export_button = QPushButton("Export briefing")
         export_button.clicked.connect(lambda: self._export_executive_briefing_for_folder(folder))
-        rename_button = QPushButton("Rename speakers")
-        rename_button.clicked.connect(lambda: self.rename_speakers_for_meeting(folder))
-        header.addWidget(rename_button)
+        copy_btn = QPushButton("Copy notes")
+        copy_btn.clicked.connect(lambda: self._copy_notes_to_clipboard(folder / "notes.md"))
+        rename_mtg_button = QPushButton("Rename")
+        rename_mtg_button.clicked.connect(lambda: self.rename_meeting(folder))
+        rename_spk_button = QPushButton("Rename speakers")
+        rename_spk_button.clicked.connect(lambda: self.rename_speakers_for_meeting(folder))
+        refresh_btn = QPushButton("Refresh")
+        refresh_btn.clicked.connect(lambda: self._force_refresh_workspace(folder))
+        header.addWidget(copy_btn)
+        header.addWidget(rename_mtg_button)
+        header.addWidget(rename_spk_button)
         header.addWidget(export_button)
+        header.addWidget(refresh_btn)
         header.addWidget(popout_button)
         return header_widget
 
@@ -139,6 +155,14 @@ class OverviewTabMixin:
         evidence_tabs.addTab(transcript_view, "Transcript evidence")
         evidence_tabs.setMinimumHeight(280)
         evidence_layout.addWidget(evidence_tabs, stretch=1)
+        copy_row = QHBoxLayout()
+        copy_notes_btn = QPushButton("Copy notes")
+        copy_notes_btn.setObjectName("SubtleActionButton")
+        copy_notes_btn.setToolTip("Copy structured notes to clipboard")
+        copy_notes_btn.clicked.connect(lambda: self._copy_notes_to_clipboard(notes_path))
+        copy_row.addWidget(copy_notes_btn)
+        copy_row.addStretch()
+        evidence_layout.addLayout(copy_row)
         layout.addWidget(evidence_panel, 1, 0, 1, 2)
 
         briefing_scroll = QScrollArea()
@@ -593,11 +617,17 @@ class OverviewTabMixin:
         export_button.clicked.connect(lambda: self._export_executive_briefing_for_folder(folder))
         notes_export_button = QPushButton("Export notes")
         notes_export_button.clicked.connect(lambda: self._export_notes_html_for_folder(folder))
+        copy_notes_button = QPushButton("Copy notes")
+        copy_notes_button.clicked.connect(lambda: self._copy_notes_to_clipboard(folder / "notes.md"))
+        rename_meeting_button = QPushButton("Rename")
+        rename_meeting_button.clicked.connect(lambda: self.rename_meeting(folder))
         rename_speakers_button = QPushButton("Rename speakers")
         rename_speakers_button.clicked.connect(lambda: self.rename_speakers_for_meeting(folder))
         header.addWidget(open_folder_button)
         header.addWidget(export_button)
         header.addWidget(notes_export_button)
+        header.addWidget(copy_notes_button)
+        header.addWidget(rename_meeting_button)
         header.addWidget(rename_speakers_button)
         layout.addLayout(header)
 
@@ -710,6 +740,7 @@ class OverviewTabMixin:
         html_path = folder / "notes.html"
         html_path.write_text(document.toHtml(), encoding="utf-8")
         self.log(f"Exported HTML notes: {html_path}")
+        os.startfile(html_path)
 
     def _export_executive_briefing_for_folder(self, folder: Path) -> None:
         try:
@@ -718,11 +749,20 @@ class OverviewTabMixin:
             QMessageBox.warning(self, "Nova Notetaker", f"Could not read meeting metadata: {error}")
             return
         insights = load_or_build_insights(folder)
+        notes_path = folder / "notes.md"
+        notes_html = ""
+        if notes_path.exists():
+            _doc = QTextDocument()
+            _doc.setMarkdown(self._notes_for_display(notes_path))
+            import re as _re
+            _body = _re.search(r"<body[^>]*>(.*?)</body>", _doc.toHtml(), _re.DOTALL | _re.IGNORECASE)
+            notes_html = _body.group(1).strip() if _body else ""
         html_path = folder / "executive_briefing.html"
-        html_path.write_text(self._executive_briefing_html(folder, metadata, insights), encoding="utf-8")
+        html_path.write_text(self._executive_briefing_html(folder, metadata, insights, notes_html=notes_html), encoding="utf-8")
         self.log(f"Exported executive briefing: {html_path}")
+        os.startfile(html_path)
 
-    def _executive_briefing_html(self, folder: Path, metadata: MeetingMetadata, insights: MeetingInsights) -> str:
+    def _executive_briefing_html(self, folder: Path, metadata: MeetingMetadata, insights: MeetingInsights, notes_html: str = "") -> str:
         notes_path = folder / "notes.md"
         summary_lines = self._note_section_lines(notes_path, "summary")
         warnings = insights.quality_warnings + insights.warnings
@@ -751,32 +791,37 @@ class OverviewTabMixin:
                 )
             return "<ul>" + "".join(rows) + "</ul>"
 
+        full_notes_section = f"<h2>Full Structured Notes</h2>{notes_html}" if notes_html.strip() else ""
         return f"""<!doctype html>
 <html>
 <head>
   <meta charset="utf-8">
   <title>Nova Meeting Briefing - {title}</title>
   <style>
-    body {{ font-family: Segoe UI, Arial, sans-serif; color: #1f2933; margin: 42px; line-height: 1.45; }}
-    h1 {{ margin-bottom: 4px; }}
-    h2 {{ margin-top: 28px; border-bottom: 1px solid #d5d9df; padding-bottom: 6px; }}
-    .muted {{ color: #667085; }}
+    body {{ font-family: Segoe UI, Arial, sans-serif; color: #1f2933; margin: 42px; line-height: 1.5; max-width: 960px; }}
+    h1 {{ margin-bottom: 4px; font-size: 24px; }}
+    h2 {{ margin-top: 32px; border-bottom: 2px solid #e5e9ef; padding-bottom: 6px; font-size: 17px; color: #2d3748; }}
+    h3 {{ margin-top: 20px; font-size: 14px; color: #4a5568; }}
+    .muted {{ color: #667085; font-size: 14px; }}
     .grid {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 22px 0; }}
-    .metric {{ border: 1px solid #d5d9df; border-radius: 8px; padding: 12px; }}
-    .metric strong {{ display: block; font-size: 24px; }}
-    li {{ margin: 8px 0; }}
-    .badges span {{ display: inline-block; margin: 6px 6px 0 0; padding: 2px 7px; border-radius: 999px; background: #eef1f5; color: #425466; font-size: 12px; }}
-    @media print {{ body {{ margin: 24px; }} }}
+    .metric {{ border: 1px solid #d5d9df; border-radius: 8px; padding: 14px; background: #f8fafc; }}
+    .metric strong {{ display: block; font-size: 26px; font-weight: 700; color: #1a202c; }}
+    .metric span {{ font-size: 12px; color: #667085; }}
+    ul {{ padding-left: 20px; }}
+    li {{ margin: 7px 0; }}
+    .badges span {{ display: inline-block; margin: 5px 5px 0 0; padding: 2px 8px; border-radius: 999px; background: #eef1f5; color: #425466; font-size: 12px; }}
+    .notes-section {{ background: #f8fafc; border: 1px solid #e5e9ef; border-radius: 8px; padding: 20px 24px; margin-top: 12px; }}
+    @media print {{ body {{ margin: 24px; }} .notes-section {{ background: white; }} }}
   </style>
 </head>
 <body>
   <h1>{title}</h1>
-  <div class="muted">{started} | Status: {html.escape(metadata.status)}</div>
+  <div class="muted">{started} &nbsp;|&nbsp; Status: {html.escape(metadata.status)}</div>
   <div class="grid">
-    <div class="metric"><strong>{sum(1 for item in insights.actions if item.status.lower() not in CLOSED_ACTION_STATUSES)}</strong>Open actions</div>
-    <div class="metric"><strong>{len(insights.decisions)}</strong>Decisions</div>
-    <div class="metric"><strong>{len(insights.dates)}</strong>Dates</div>
-    <div class="metric"><strong>{len(warnings)}</strong>Review warnings</div>
+    <div class="metric"><strong>{sum(1 for item in insights.actions if item.status.lower() not in CLOSED_ACTION_STATUSES)}</strong><span>Open actions</span></div>
+    <div class="metric"><strong>{len(insights.decisions)}</strong><span>Decisions</span></div>
+    <div class="metric"><strong>{len(insights.dates)}</strong><span>Dates</span></div>
+    <div class="metric"><strong>{len(warnings)}</strong><span>Review warnings</span></div>
   </div>
   <h2>Executive Summary</h2>
   {list_html(summary_lines)}
@@ -788,9 +833,39 @@ class OverviewTabMixin:
   {insight_list(insights.dates)}
   <h2>Review Needed</h2>
   {list_html([str(item.text if isinstance(item, InsightItem) else item) for item in warnings])}
+  {f'<div class="notes-section">{full_notes_section}</div>' if full_notes_section else ""}
 </body>
 </html>
 """
+
+    def _copy_notes_to_clipboard(self, notes_path: Path) -> None:
+        from PySide6.QtWidgets import QApplication
+        if not notes_path.exists():
+            QMessageBox.information(self, "Nova Notetaker", "This meeting does not have notes yet.")
+            return
+        text = notes_path.read_text(encoding="utf-8")
+        QApplication.clipboard().setText(text)
+        self.log(f"Copied notes to clipboard: {notes_path.parent.name}")
+
+    def rename_meeting(self, folder: Path) -> None:
+        from PySide6.QtWidgets import QInputDialog
+        try:
+            metadata = self.meeting_store.read_metadata(folder)
+        except Exception as error:
+            QMessageBox.warning(self, "Nova Notetaker", f"Could not read meeting metadata: {error}")
+            return
+        new_title, accepted = QInputDialog.getText(
+            self, "Rename Meeting", "Meeting title:", text=metadata.title or ""
+        )
+        if not accepted or not new_title.strip():
+            return
+        metadata.title = new_title.strip()
+        self.meeting_store.write_metadata(folder, metadata)
+        self.refresh_meetings()
+        self.log(f"Renamed meeting to: {new_title.strip()}")
+        if self.overview_workspace_folder == folder:
+            self.overview_workspace_folder = None
+            self.open_meeting_workspace(folder)
 
     def rename_speakers_for_meeting(self, folder: Path) -> None:
         transcript_path = folder / "transcript.md"

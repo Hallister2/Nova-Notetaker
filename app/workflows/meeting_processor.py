@@ -149,14 +149,21 @@ class MeetingProcessor:
             warnings.append(warning)
             on_status(warning)
             notes_path = self.meeting_store.write_notes_stub(folder, metadata, transcript_path, warnings)
-        elif settings.get("ai", {}).get("provider", "ollama") == "ollama":
-            on_status("Generating notes with Ollama")
+        else:
+            provider = settings.get("ai", {}).get("provider", "ollama").lower()
+            provider_labels = {"ollama": "Ollama", "openai": "OpenAI", "claude": "Claude"}
+            on_status(f"Generating notes with {provider_labels.get(provider, provider)}")
             notes_started = time.monotonic()
             transcript_text = self._cleanup_transcript_for_notes(notes_transcript_text or transcript_text)
-            notes_result = OllamaClient(settings).generate_meeting_notes(
-                transcript_text,
-                profile_context=self._profile_prompt_context(metadata),
-            )
+            profile_context = self._profile_prompt_context(metadata)
+            if provider == "openai":
+                from app.intelligence.openai_client import OpenAIClient
+                notes_result = OpenAIClient(settings).generate_meeting_notes(transcript_text, profile_context=profile_context)
+            elif provider == "claude":
+                from app.intelligence.claude_client import ClaudeClient
+                notes_result = ClaudeClient(settings).generate_meeting_notes(transcript_text, profile_context=profile_context)
+            else:
+                notes_result = OllamaClient(settings).generate_meeting_notes(transcript_text, profile_context=profile_context)
             notes_seconds = time.monotonic() - notes_started
             if notes_result.success:
                 if notes_result.warning:
@@ -168,11 +175,6 @@ class MeetingProcessor:
                     warnings.append(notes_result.warning)
                     on_status(notes_result.warning)
                 notes_path = self.meeting_store.write_notes_stub(folder, metadata, transcript_path, warnings)
-        else:
-            warning = "OpenAI provider is selected, but OpenAI notes generation is not wired yet."
-            warnings.append(warning)
-            on_status(warning)
-            notes_path = self.meeting_store.write_notes_stub(folder, metadata, transcript_path, warnings)
 
         meeting_date = None
         try:

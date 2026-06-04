@@ -458,6 +458,13 @@ class CaptureTabMixin:
         ):
             if value:
                 badges.addWidget(self._badge_label(value, kind))
+        if item.kind == "date" and item.due_date:
+            cal_button = QPushButton("Calendar")
+            cal_button.setObjectName("SubtleActionButton")
+            cal_button.setFixedHeight(24)
+            cal_button.setToolTip("Export this date as an .ics file to import into your calendar app.")
+            cal_button.clicked.connect(lambda checked=False, date_item=item: self._export_single_date_ics(date_item))
+            badges.addWidget(cal_button)
         badges.addStretch()
         layout.addLayout(badges)
         return container
@@ -487,10 +494,10 @@ class CaptureTabMixin:
                 continue
             badges.addWidget(self._badge_label(value, kind))
         if item.kind == "date":
-            calendar_button = QPushButton("Calendar later")
+            calendar_button = QPushButton("Calendar")
             calendar_button.setObjectName("SubtleActionButton")
-            calendar_button.setEnabled(False)
-            calendar_button.setToolTip("Calendar integration is planned for a later pass.")
+            calendar_button.setToolTip("Export this date as an .ics file to import into your calendar app.")
+            calendar_button.clicked.connect(lambda checked=False, date_item=item: self._export_single_date_ics(date_item))
             badges.addWidget(calendar_button)
         badges.addStretch()
         layout.addLayout(badges)
@@ -731,8 +738,10 @@ class CaptureTabMixin:
     def _refresh_service_status_label(self) -> None:
         if not hasattr(self, "sidebar_services_label"):
             return
+        provider = self.settings.get("ai", {}).get("provider", "ollama")
+        provider_display = {"ollama": "Ollama", "openai": "OpenAI", "claude": "Claude"}.get(provider, provider)
         parts = []
-        for name in ("Ollama", "WhisperLive"):
+        for name in (provider_display, "WhisperLive"):
             state = self._service_statuses.get(name, "unknown")
             if state == "ok":
                 indicator = "✓"
@@ -1198,6 +1207,42 @@ class CaptureTabMixin:
         self.refresh_review_center()
         self.log(f"Added meeting marker at {marker['offset_label']}: {text}")
 
+    def _export_single_date_ics(self, item: InsightItem) -> None:
+        import os
+        import tempfile
+        from app.ui.review_helpers import ics_escape
+        now_stamp = datetime.now().strftime("%Y%m%dT%H%M%S")
+        due_date = item.due_date or item.text or ""
+        context = item.context or item.text or due_date
+        dtstart = ""
+        import re as _re
+        if _re.match(r"^\d{4}-\d{2}-\d{2}$", due_date.strip()):
+            dtstart = f"DTSTART;VALUE=DATE:{due_date.replace('-', '')}"
+        lines = [
+            "BEGIN:VCALENDAR",
+            "VERSION:2.0",
+            "PRODID:-//Nova Notetaker//Meeting Intelligence//EN",
+            "CALSCALE:GREGORIAN",
+            "BEGIN:VEVENT",
+            f"UID:nova-{now_stamp}-single@nova-notetaker",
+            f"DTSTAMP:{now_stamp}",
+            f"SUMMARY:{ics_escape(context or due_date)}",
+            f"DESCRIPTION:{ics_escape('Date: ' + due_date + '\\nContext: ' + context + '\\nConfidence: ' + (item.confidence or 'Unknown'))}",
+        ]
+        if dtstart:
+            lines.append(dtstart)
+        lines += ["END:VEVENT", "END:VCALENDAR"]
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".ics", delete=False, encoding="utf-8", prefix="nova_date_") as fh:
+                fh.write("\r\n".join(lines) + "\r\n")
+                tmp_path = fh.name
+            os.startfile(tmp_path)
+            self.log(f"Exported date to calendar: {due_date} – {context}")
+        except Exception as error:
+            self.log(f"Calendar export failed: {error}")
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Nova Notetaker", f"Could not open calendar file:\n{error}")
+
     def detect_active_window_title(self) -> None:
         title = self._active_window_title()
         if not title:
@@ -1225,10 +1270,26 @@ class CaptureTabMixin:
 
     @staticmethod
     def _clean_window_title(title: str) -> str:
+        # Microsoft Teams
         title = title.replace(" | Microsoft Teams", "")
         title = title.replace(" - Microsoft Teams", "")
         title = title.replace("Microsoft Teams", "")
-        return title.strip(" -|") or "Teams Meeting"
+        # Zoom
+        title = re.sub(r"\s*[-–]\s*Zoom$", "", title)
+        title = re.sub(r"^Zoom\s*[-–]\s*", "", title)
+        title = re.sub(r"\s*\(\d+\s*participants?\)", "", title, flags=re.IGNORECASE)
+        title = re.sub(r"\s*Meeting ID:\s*\d[\d\s-]*", "", title, flags=re.IGNORECASE)
+        # Google Meet
+        title = re.sub(r"\s*[-–]\s*Google Meet$", "", title)
+        title = re.sub(r"^Meet\s*[-–]\s*", "", title)
+        # Webex
+        title = re.sub(r"\s*[-–]\s*Cisco Webex (Meetings?|Webinars?)$", "", title, flags=re.IGNORECASE)
+        title = re.sub(r"\s*\|\s*Webex$", "", title, flags=re.IGNORECASE)
+        title = re.sub(r"^Webex\s*[-–|]\s*", "", title, flags=re.IGNORECASE)
+        # Slack huddle
+        title = re.sub(r"\s*[-–]\s*Slack$", "", title)
+        cleaned = title.strip(" -|–")
+        return cleaned or "Meeting"
 
     @Slot(str, float)
     def update_level(self, source: str, level: float) -> None:
