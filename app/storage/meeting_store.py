@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from app.core.settings import APP_ROOT, load_settings
+from app.core.settings import USER_DATA_DIR, load_settings
 
 
 def _migrate_metadata(data: dict[str, Any]) -> dict[str, Any]:
@@ -49,8 +49,9 @@ class MeetingMetadata:
 class MeetingStore:
     def __init__(self) -> None:
         settings = load_settings()
-        relative_dir = settings["storage"].get("meetings_dir", "meetings")
-        self.meetings_root = APP_ROOT / relative_dir
+        meetings_dir = settings["storage"].get("meetings_dir", "Meetings")
+        configured = Path(meetings_dir)
+        self.meetings_root = configured if configured.is_absolute() else USER_DATA_DIR / meetings_dir
         self.meetings_root.mkdir(parents=True, exist_ok=True)
 
     def create_meeting_folder(self, title: str) -> Path:

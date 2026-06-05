@@ -1,12 +1,32 @@
 from __future__ import annotations
 
+import ctypes
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
+
+def _get_documents_dir() -> Path:
+    # On Windows, use the Shell API so OneDrive/GPO folder redirection is honoured.
+    # CSIDL_PERSONAL (5) always returns the real Documents path even when it has
+    # been moved to OneDrive or redirected by Group Policy.
+    if sys.platform == "win32":
+        try:
+            buf = ctypes.create_unicode_buffer(ctypes.wintypes.MAX_PATH)
+            if ctypes.windll.shell32.SHGetFolderPathW(None, 5, None, 0, buf) == 0:
+                return Path(buf.value)
+        except Exception:
+            pass
+    return Path.home() / "Documents"
+
+
 APP_ROOT = Path(__file__).resolve().parents[2]
-CONFIG_DIR = APP_ROOT / "config"
+
+USER_DATA_DIR = _get_documents_dir() / "Nova Notetaker"
+CONFIG_DIR = USER_DATA_DIR / "Config"
+LOGS_DIR = USER_DATA_DIR / "Logs"
 SETTINGS_PATH = CONFIG_DIR / "settings.json"
 
 DEFAULT_SETTINGS: dict[str, Any] = {
@@ -51,7 +71,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "post_audio_max_wait_seconds": 120,
     },
     "storage": {
-        "meetings_dir": "meetings",
+        "meetings_dir": "Meetings",
     },
     "review": {
         "action_auto_close_days": 30,
@@ -59,8 +79,15 @@ DEFAULT_SETTINGS: dict[str, Any] = {
 }
 
 
+def ensure_user_data_dirs() -> None:
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    (USER_DATA_DIR / "Meetings").mkdir(parents=True, exist_ok=True)
+
+
 def load_settings() -> dict[str, Any]:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
     if not SETTINGS_PATH.exists():
         save_settings(DEFAULT_SETTINGS)
         return json.loads(json.dumps(DEFAULT_SETTINGS))
@@ -73,6 +100,7 @@ def load_settings() -> dict[str, Any]:
 
 def save_settings(settings: dict[str, Any]) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
     with SETTINGS_PATH.open("w", encoding="utf-8") as handle:
         json.dump(settings, handle, indent=2)
 
