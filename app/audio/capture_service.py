@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 import wave
 from dataclasses import dataclass
 from pathlib import Path
@@ -48,6 +49,7 @@ class CaptureService:
         self.callback_lock = Lock()
         self.stream_lock = Lock()
         self.loopback_stream = None
+        self.last_level_emit: dict[str, float] = {}
         self.threads: list[Thread] = []
 
     def start(self) -> None:

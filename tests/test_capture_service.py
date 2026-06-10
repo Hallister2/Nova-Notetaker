@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from pathlib import Path
 from unittest import TestCase
 
-from app.audio.capture_service import CaptureService
+from app.audio.capture_service import CaptureConfig, CaptureService
 from app.audio.device_manager import AudioDevice
 from app.ui.tabs.capture_tab import CaptureTabMixin
 
@@ -13,6 +14,7 @@ class CaptureServiceTests(TestCase):
         self.assertEqual(CaptureService._loopback_channel_candidates(2), [2, 1])
         self.assertEqual(CaptureService._loopback_channel_candidates(1), [1, 2])
         self.assertEqual(CaptureService._loopback_channel_candidates(0), [2, 1])
+
     def test_capture_channels_preserve_loopback_device_channels(self) -> None:
         loopback = AudioDevice(
             name="SteelSeries Sonar - Gaming [Loopback]",
@@ -23,3 +25,18 @@ class CaptureServiceTests(TestCase):
         )
         self.assertEqual(CaptureTabMixin._capture_channels(loopback, default=2, max_channels=None), 8)
         self.assertEqual(CaptureTabMixin._capture_channels(loopback, default=2, max_channels=2), 2)
+
+    def test_emit_level_initializes_throttle_state(self) -> None:
+        levels: list[tuple[str, float]] = []
+        service = CaptureService(
+            config=CaptureConfig(
+                meeting_folder=Path("."),
+                mic_device_index=None,
+                loopback_device_index=None,
+            ),
+            on_status=lambda _message: None,
+            on_level=lambda source, level: levels.append((source, level)),
+        )
+        service._emit_level("mic", 0.5)
+        self.assertEqual(levels, [("mic", 0.5)])
+        self.assertIn("mic", service.last_level_emit)

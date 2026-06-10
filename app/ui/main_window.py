@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QSize, QThread, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QCursor, QDesktopServices, QIcon, QPixmap
+from PySide6.QtGui import QCursor, QDesktopServices, QFont, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -849,6 +849,7 @@ class MainWindow(
 
 def run_app() -> None:
     app = QApplication(sys.argv)
+    app.setFont(QFont("Segoe UI", 10))
     window = MainWindow()
     window.show()
     sys.exit(app.exec())

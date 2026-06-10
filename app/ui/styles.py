@@ -56,7 +56,7 @@ def build_stylesheet(theme_name: str = "executive_dark") -> str:
 QWidget {{
     background-color: {t["app"]};
     color: {t["text"]};
-    font-family: Segoe UI;
+    font-family: "Segoe UI", Arial, sans-serif;
     font-size: 13px;
 }}
 

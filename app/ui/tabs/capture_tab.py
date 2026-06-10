@@ -649,9 +649,6 @@ class CaptureTabMixin:
         if not live_enabled or not live_url:
             if hasattr(self, "live_transcript_status_label"):
                 self.live_transcript_status_label.setText("Live transcript disabled")
-            self._set_transcript_rows([
-                ("--:--:--", "Live Transcript", "Live transcript is disabled. Final transcript will be generated after recording.", False)
-            ])
             self.log("Live transcript disabled. Final transcript will be generated after recording.")
             return
         self.live_transcript_rows = []
@@ -894,7 +891,6 @@ class CaptureTabMixin:
         self.request_worker_start.connect(self.worker.start)
         self.request_worker_stop.connect(self.worker.stop)
         self.worker.status.connect(self._capture_status)
-        self.worker.level.connect(self.update_level)
         self.worker.stopped.connect(self.worker_thread.quit)
         self.worker.stopped.connect(self.worker.deleteLater)
         self.worker_thread.finished.connect(self._capture_finished)
@@ -941,15 +937,7 @@ class CaptureTabMixin:
         self.action_items_count.setText("0")
         self.decisions_count.setText("0")
         self.dates_count.setText("0")
-        self._set_insight_items(self.live_action_items_layout, ["Waiting for notes generation"])
-        self._set_insight_items(self.live_decisions_layout, ["Waiting for notes generation"])
-        self._set_insight_items(self.live_dates_layout, ["Waiting for notes generation"])
-        if hasattr(self, "live_insights_context_label"):
-            self.live_insights_context_label.setText(
-                "Live transcript is realtime. Actions, decisions, and dates fill in after notes are processed."
-            )
-        self._set_transcript_rows([("--:--:--", "Meeting Audio", "Listening for meeting audio...", True)])
-        self._start_live_transcription()
+        QTimer.singleShot(150, self._reset_recording_panels_after_start)
         self.log(f"Meeting folder: {self.meeting_folder}")
         capture_format = (
             f"mic {'muted' if not config.capture_mic else f'{config.mic_sample_rate} Hz / {config.mic_channels} ch'}, "
@@ -959,6 +947,19 @@ class CaptureTabMixin:
         self.log(f"Capture format: {capture_format}")
         self.log(f"Capture profile: {self._profile_label(self.settings['audio'].get('capture_profile', ''))}")
         self.request_worker_start.emit()
+
+    def _reset_recording_panels_after_start(self) -> None:
+        if self.timer_phase != "recording":
+            return
+        self._set_insight_items(self.live_action_items_layout, ["Waiting for notes generation"])
+        self._set_insight_items(self.live_decisions_layout, ["Waiting for notes generation"])
+        self._set_insight_items(self.live_dates_layout, ["Waiting for notes generation"])
+        if hasattr(self, "live_insights_context_label"):
+            self.live_insights_context_label.setText(
+                "Live transcript is realtime. Actions, decisions, and dates fill in after notes are processed."
+            )
+        self._set_transcript_rows([("--:--:--", "Meeting Audio", "Listening for meeting audio...", True)])
+        self._start_live_transcription()
 
     @Slot(str)
     def _capture_status(self, message: str) -> None:

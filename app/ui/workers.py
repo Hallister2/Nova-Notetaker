@@ -25,7 +25,11 @@ class CaptureWorker(QObject):
     def __init__(self, config: CaptureConfig) -> None:
         super().__init__()
         config.live_audio_callback = self.audio_chunk.emit
-        self.service = CaptureService(config, self.status.emit, self.level.emit)
+        self.service = CaptureService(config, self.status.emit, self._ignore_level)
+
+    @staticmethod
+    def _ignore_level(_source: str, _level: float) -> None:
+        return None
 
     @Slot()
     def start(self) -> None:
