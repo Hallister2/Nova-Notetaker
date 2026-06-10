@@ -69,9 +69,15 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "websocket_chunk_delay_seconds": 0.005,
         "post_audio_quiet_seconds": 5.0,
         "post_audio_max_wait_seconds": 120,
+        "prefer_live_transcript": True,
+        "live_transcript_min_words": 30,
     },
     "storage": {
         "meetings_dir": "Meetings",
+        "archive_wav_to_flac": True,
+        "delete_raw_audio_after_processing": False,
+        "notes_only_archive": False,
+        "retention_days": 0,
     },
     "review": {
         "action_auto_close_days": 30,

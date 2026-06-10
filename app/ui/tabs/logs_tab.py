@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime
 
 from PySide6.QtCore import Slot
+from app.core.crash_logging import write_runtime_log
+
 from PySide6.QtWidgets import (
     QFrame,
     QLabel,
@@ -35,4 +37,7 @@ class LogsTabMixin:
     @Slot(str)
     def log(self, message: str) -> None:
         timestamp = datetime.now().strftime("%H:%M:%S")
-        self.log_output.append(f"[{timestamp}] {message}")
+        line = f"[{timestamp}] {message}"
+        if hasattr(self, "log_output"):
+            self.log_output.append(line)
+        write_runtime_log(message)

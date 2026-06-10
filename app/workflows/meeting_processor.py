@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime
 from difflib import SequenceMatcher
 from pathlib import Path
 import re
+import shutil
+import subprocess
 import time
 from typing import Any, Callable
 import wave
@@ -48,6 +51,7 @@ class MeetingProcessor:
         mic_capture_enabled = bool(getattr(metadata, "capture_mic", True))
         notes_transcript_text = ""
 
+        self._restore_archived_wavs(folder, on_status)
         on_status("Waiting for captured audio files to settle")
         self._wait_for_audio_files_ready(folder, include_mic=mic_capture_enabled)
         on_status("Validating captured audio")
@@ -87,34 +91,18 @@ class MeetingProcessor:
         else:
             on_status("Preparing transcript")
             transcription_started = time.monotonic()
-            transcriber = WhisperLiveClient(settings)
-            transcript_results: list[TranscriptionResult] = []
-            if not mic_capture_enabled:
-                transcript_results.append(TranscriptionResult("You", "", False, None))
-            elif mic_info.valid:
-                transcript_results.append(
-                    transcriber.transcribe_file(
-                        folder / "mic.wav",
-                        "You",
-                        on_status=on_status,
-                        previous_chunks=self._previous_successful_chunks(metadata, "You"),
-                    )
-                )
+            live_result = self._live_transcript_result(folder, metadata, settings, on_status)
+            if live_result is not None:
+                transcript_results = [TranscriptionResult("You", "", False, None), live_result]
             else:
-                transcript_results.append(TranscriptionResult("You", "", False, "Skipping mic transcription because mic.wav is invalid."))
-
-            if system_info.valid:
-                transcript_results.append(
-                    transcriber.transcribe_file(
-                        folder / "system.wav",
-                        "Meeting",
-                        on_status=on_status,
-                        previous_chunks=self._previous_successful_chunks(metadata, "Meeting"),
-                    )
-                )
-            else:
-                transcript_results.append(
-                    TranscriptionResult("Meeting", "", False, "Skipping meeting-audio transcription because system.wav is invalid.")
+                transcript_results = self._transcribe_capture_sources(
+                    folder,
+                    metadata,
+                    settings,
+                    mic_capture_enabled,
+                    mic_info.valid,
+                    system_info.valid,
+                    on_status,
                 )
             transcription_seconds = time.monotonic() - transcription_started
 
@@ -184,7 +172,9 @@ class MeetingProcessor:
             pass
         insights_path = write_insights_json(folder, build_insights_from_notes(notes_path, meeting_date=meeting_date))
         on_status(f"Meeting insights saved: {insights_path.name}")
+        audio_archive = self._archive_audio_files(folder, metadata, settings, warnings, on_status)
         metadata.processing = {
+            **(metadata.processing if isinstance(metadata.processing, dict) else {}),
             "transcript_path": str(transcript_path),
             "notes_path": str(notes_path),
             "insights_path": str(insights_path),
@@ -196,11 +186,148 @@ class MeetingProcessor:
                 "notes_seconds": round(notes_seconds, 3),
                 "transcription": transcription_details,
                 "capture_quality": self._capture_quality_summary(metadata, has_transcript, len(warnings)),
+                "audio_archive": audio_archive,
             },
         }
         metadata.status = "processed_with_warnings" if warnings else "processed"
         self.meeting_store.write_metadata(folder, metadata)
         return ProcessingResult(warnings=warnings, transcript_path=transcript_path, notes_path=notes_path)
+
+    def _live_transcript_result(
+        self,
+        folder: Path,
+        metadata: MeetingMetadata,
+        settings: dict[str, Any],
+        on_status: StatusCallback,
+    ) -> TranscriptionResult | None:
+        if not settings.get("transcription", {}).get("prefer_live_transcript", True):
+            return None
+        path = folder / "live_transcript.md"
+        if isinstance(metadata.processing, dict):
+            configured = str(metadata.processing.get("live_transcript_path") or "")
+            if configured:
+                path = Path(configured)
+        if not path.exists():
+            return None
+        text = self._usable_existing_transcript_text(path.read_text(encoding="utf-8", errors="ignore"))
+        if len(text.split()) < int(settings.get("transcription", {}).get("live_transcript_min_words", 30)):
+            return None
+        on_status("Using live transcript captured during recording")
+        return TranscriptionResult(
+            "Meeting",
+            text,
+            True,
+            None,
+            {"source": "live_transcript", "path": str(path), "word_count": len(text.split())},
+        )
+
+    def _transcribe_capture_sources(
+        self,
+        folder: Path,
+        metadata: MeetingMetadata,
+        settings: dict[str, Any],
+        mic_capture_enabled: bool,
+        mic_valid: bool,
+        system_valid: bool,
+        on_status: StatusCallback,
+    ) -> list[TranscriptionResult]:
+        jobs: list[tuple[str, Path, str]] = []
+        results: dict[str, TranscriptionResult] = {}
+        if not mic_capture_enabled:
+            results["You"] = TranscriptionResult("You", "", False, None)
+        elif mic_valid:
+            jobs.append(("You", folder / "mic.wav", "microphone"))
+        else:
+            results["You"] = TranscriptionResult("You", "", False, "Skipping mic transcription because mic.wav is invalid.")
+
+        if system_valid:
+            jobs.append(("Meeting", folder / "system.wav", "meeting audio"))
+        else:
+            results["Meeting"] = TranscriptionResult("Meeting", "", False, "Skipping meeting-audio transcription because system.wav is invalid.")
+
+        if jobs:
+            workers = min(len(jobs), 2)
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = {
+                    executor.submit(
+                        WhisperLiveClient(settings).transcribe_file,
+                        path,
+                        source,
+                        on_status=on_status,
+                        previous_chunks=self._previous_successful_chunks(metadata, source),
+                    ): (source, label)
+                    for source, path, label in jobs
+                }
+                for future in as_completed(futures):
+                    source, label = futures[future]
+                    try:
+                        results[source] = future.result()
+                    except Exception as error:
+                        results[source] = TranscriptionResult(source, "", False, f"Skipping {label} transcription because it failed: {error}")
+
+        return [results.get("You", TranscriptionResult("You", "", False, None)), results.get("Meeting", TranscriptionResult("Meeting", "", False, None))]
+
+    def _restore_archived_wavs(self, folder: Path, on_status: StatusCallback) -> None:
+        if shutil.which("ffmpeg") is None:
+            return
+        restored = False
+        for label in ("mic", "system"):
+            wav_path = folder / f"{label}.wav"
+            flac_path = folder / f"{label}.flac"
+            if wav_path.exists() or not flac_path.exists():
+                continue
+            try:
+                subprocess.run(
+                    ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(flac_path), str(wav_path)],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+                restored = True
+            except Exception as error:
+                on_status(f"Could not restore {label}.wav from archived FLAC: {error}")
+        if restored:
+            on_status("Archived FLAC audio restored for processing")
+
+    def _archive_audio_files(
+        self,
+        folder: Path,
+        metadata: MeetingMetadata,
+        settings: dict[str, Any],
+        warnings: list[str],
+        on_status: StatusCallback,
+    ) -> dict[str, str]:
+        storage = settings.get("storage", {})
+        if not storage.get("archive_wav_to_flac", True):
+            return {}
+        if shutil.which("ffmpeg") is None:
+            return {"status": "skipped", "reason": "ffmpeg not found"}
+        archived: dict[str, str] = {"status": "archived"}
+        for label, enabled in (("mic", bool(getattr(metadata, "capture_mic", True))), ("system", True)):
+            source = folder / f"{label}.wav"
+            if not enabled or not source.exists():
+                continue
+            target = folder / f"{label}.flac"
+            try:
+                subprocess.run(
+                    ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(source), str(target)],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+                if target.exists() and target.stat().st_size > 0:
+                    source.unlink()
+                    archived[label] = target.name
+            except Exception as error:
+                warning = f"Audio archive skipped for {label}.wav: {error}"
+                warnings.append(warning)
+                on_status(warning)
+        if len(archived) == 1:
+            return {"status": "skipped", "reason": "no wav files archived"}
+        on_status("Raw WAV audio archived to FLAC")
+        return archived
 
     @staticmethod
     def _previous_successful_chunks(metadata: MeetingMetadata, source: str) -> dict[int, str]:
@@ -237,11 +364,22 @@ class MeetingProcessor:
     def _capture_quality_summary(metadata: MeetingMetadata, has_transcript: bool, warning_count: int = 0) -> dict[str, Any]:
         system_audio = metadata.audio_files.get("system", {}) if isinstance(metadata.audio_files, dict) else {}
         mic_audio = metadata.audio_files.get("mic", {}) if isinstance(metadata.audio_files, dict) else {}
+        system_state = MeetingProcessor._audio_quality_state(system_audio)
+        mic_state = "muted" if not metadata.capture_mic else MeetingProcessor._audio_quality_state(mic_audio)
+        transcript_state = "available" if has_transcript else "missing"
+        score = 100
+        for state in (system_state, mic_state, transcript_state):
+            if state in {"missing", "invalid"}:
+                score -= 30
+            elif state == "quiet":
+                score -= 15
+        score -= min(warning_count * 5, 25)
         return {
-            "system_audio": MeetingProcessor._audio_quality_state(system_audio),
-            "microphone_audio": "muted" if not metadata.capture_mic else MeetingProcessor._audio_quality_state(mic_audio),
-            "transcript": "available" if has_transcript else "missing",
+            "system_audio": system_state,
+            "microphone_audio": mic_state,
+            "transcript": transcript_state,
             "warning_count": warning_count,
+            "score": max(0, score),
         }
 
     @staticmethod

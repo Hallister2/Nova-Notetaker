@@ -18,6 +18,7 @@ class InsightItem:
     text: str
     owner: str = ""
     due_date: str = ""
+    normalized_date: str = ""
     source: str = ""
     confidence: str = ""
     status: str = "open"
@@ -38,12 +39,21 @@ class InsightItem:
     def display_text(self) -> str:
         if self.kind == "action":
             owner = self.owner or "Unknown"
-            due = f" | {self.due_date}" if self.due_date and self.due_date.lower() != "unknown" else ""
+            due_label = self.date_label
+            due = f" | {due_label}" if due_label and due_label.lower() != "unknown" else ""
             return f"{owner}: {self.text}{due}"
         if self.kind == "date":
-            label = self.due_date or self.text
+            label = self.date_label or self.text
             return f"{label}: {self.context or self.text}"
         return self.text
+
+    @property
+    def date_label(self) -> str:
+        display = self.due_date or ""
+        normalized = self.normalized_date or ""
+        if display and normalized and display != normalized:
+            return f"{display} ({normalized})"
+        return display or normalized
 
 
 @dataclass
@@ -155,7 +165,7 @@ def _parse_action(text: str, meeting_date: datetime | None = None) -> InsightIte
     task = fields.get("task") or _strip_known_fields(text)
     raw_due = fields.get("due", "")
     due_date, inferred_confidence = _extract_trailing_confidence(raw_due)
-    due_date = _normalize_date_string(due_date, meeting_date)
+    normalized_date = _normalize_date_string(due_date, meeting_date)
     owner, owner_confidence = _extract_trailing_confidence(fields.get("owner", "Unknown"))
     task, task_confidence = _extract_trailing_confidence(task)
     return InsightItem(
@@ -163,6 +173,7 @@ def _parse_action(text: str, meeting_date: datetime | None = None) -> InsightIte
         text=task,
         owner=_normalize_owner(owner),
         due_date=due_date,
+        normalized_date=normalized_date if normalized_date != due_date else "",
         source=fields.get("source", ""),
         confidence=_normalize_confidence(fields.get("confidence", "") or inferred_confidence or owner_confidence or task_confidence),
     )
@@ -189,7 +200,8 @@ def _parse_date(text: str, meeting_date: datetime | None = None) -> InsightItem:
     return InsightItem(
         kind="date",
         text=context,
-        due_date=normalized_date or raw_date,
+        due_date=raw_date,
+        normalized_date=normalized_date if normalized_date != raw_date else "",
         context=context,
         source=fields.get("source", ""),
         confidence=_normalize_confidence(fields.get("confidence", "") or inferred_confidence),

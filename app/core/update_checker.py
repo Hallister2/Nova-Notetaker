@@ -32,6 +32,8 @@ class UpdateCheckResult:
     is_prerelease: bool
     download_url: str = ""
     asset_name: str = ""
+    checksum_url: str = ""
+    checksum_name: str = ""
 
 
 def _parse_version(text: str) -> list[int]:
@@ -54,20 +56,50 @@ def _is_newer(candidate: str, current: str) -> bool:
     return c_parts > k_parts
 
 
+_VALID_ASSET_PREFIXES = ("https://github.com/", "https://objects.githubusercontent.com/")
+_CHECKSUM_NAMES = ("sha256sums.txt", "checksums.txt", "sha256.txt")
+_CHECKSUM_SUFFIXES = (".sha256", ".sha256sum", ".sha256.txt", ".sha256sum.txt")
+
+
+def _trusted_asset_url(asset: dict) -> str:
+    url = str(asset.get("browser_download_url", ""))
+    return url if url.startswith(_VALID_ASSET_PREFIXES) else ""
+
+
 def _pick_installer_asset(assets: list[dict]) -> tuple[str, str]:
     candidates = [a for a in assets if a.get("name", "").lower().endswith((".exe", ".msi"))]
     if not candidates:
         return "", ""
-    _VALID_PREFIXES = ("https://github.com/", "https://objects.githubusercontent.com/")
     for keyword in ("setup", "installer", "install"):
         for asset in candidates:
-            if keyword in asset["name"].lower():
-                url = asset.get("browser_download_url", "")
-                if url.startswith(_VALID_PREFIXES):
-                    return url, asset["name"]
-    url = candidates[0].get("browser_download_url", "")
-    if url.startswith(_VALID_PREFIXES):
-        return url, candidates[0]["name"]
+            if keyword in str(asset.get("name", "")).lower():
+                url = _trusted_asset_url(asset)
+                if url:
+                    return url, str(asset.get("name", ""))
+    url = _trusted_asset_url(candidates[0])
+    if url:
+        return url, str(candidates[0].get("name", ""))
+    return "", ""
+
+
+def _pick_checksum_asset(assets: list[dict], installer_name: str) -> tuple[str, str]:
+    if not installer_name:
+        return "", ""
+    installer_lower = installer_name.lower()
+    for asset in assets:
+        name = str(asset.get("name", ""))
+        lowered = name.lower()
+        if any(lowered == f"{installer_lower}{suffix}" for suffix in _CHECKSUM_SUFFIXES):
+            url = _trusted_asset_url(asset)
+            if url:
+                return url, name
+    for asset in assets:
+        name = str(asset.get("name", ""))
+        lowered = name.lower()
+        if lowered in _CHECKSUM_NAMES or any(lowered.endswith(suffix) for suffix in _CHECKSUM_SUFFIXES):
+            url = _trusted_asset_url(asset)
+            if url:
+                return url, name
     return "", ""
 
 
@@ -125,7 +157,9 @@ def check_for_updates(timeout: int = 5) -> UpdateCheckResult:
     release_name = best.get("name") or latest_tag
     release_url = best.get("html_url") or RELEASES_URL
     is_prerelease = bool(best.get("prerelease"))
-    download_url, asset_name = _pick_installer_asset(best.get("assets", []))
+    assets = best.get("assets", [])
+    download_url, asset_name = _pick_installer_asset(assets)
+    checksum_url, checksum_name = _pick_checksum_asset(assets, asset_name)
 
     return UpdateCheckResult(
         current_version=current,
@@ -137,4 +171,6 @@ def check_for_updates(timeout: int = 5) -> UpdateCheckResult:
         is_prerelease=is_prerelease,
         download_url=download_url,
         asset_name=asset_name,
+        checksum_url=checksum_url,
+        checksum_name=checksum_name,
     )

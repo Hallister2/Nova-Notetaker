@@ -117,6 +117,11 @@ class CaptureService:
     def _emit_level(self, source: str, level: float) -> None:
         if not self.callbacks_enabled.is_set():
             return
+        now = time.monotonic()
+        previous = self.last_level_emit.get(source, 0.0)
+        if now - previous < 0.12 and level > 0.0:
+            return
+        self.last_level_emit[source] = now
         try:
             self.on_level(source, level)
         except RuntimeError:

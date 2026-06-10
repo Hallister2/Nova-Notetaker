@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import os
+import re
 import ssl
+import subprocess
 import sys
 import tempfile
 import urllib.request
@@ -76,41 +79,95 @@ class _DownloadWorker(QObject):
     _CHUNK = 65_536
     _TIMEOUT = 60
 
-    def __init__(self, url: str, dest: str) -> None:
+    def __init__(self, url: str, dest: str, checksum_url: str = "", checksum_name: str = "") -> None:
         super().__init__()
         self._url = url
         self._dest = dest
+        self._checksum_url = checksum_url
+        self._checksum_name = checksum_name
 
     def run(self) -> None:
         try:
-            contexts: list[ssl.SSLContext] = [ssl.create_default_context()]
-            unverified = ssl.create_default_context()
-            unverified.check_hostname = False
-            unverified.verify_mode = ssl.CERT_NONE
-            contexts.append(unverified)
-            last_exc: BaseException | None = None
-            for ctx in contexts:
-                try:
-                    req = urllib.request.Request(self._url, headers={"User-Agent": "Nova-Notetaker"})
-                    with urllib.request.urlopen(req, context=ctx, timeout=self._TIMEOUT) as resp:
-                        total = int(resp.headers.get("Content-Length") or 0)
-                        downloaded = 0
-                        with open(self._dest, "wb") as fh:
-                            while True:
-                                chunk = resp.read(self._CHUNK)
-                                if not chunk:
-                                    break
-                                fh.write(chunk)
-                                downloaded += len(chunk)
-                                if total:
-                                    self.progress.emit(min(100, int(downloaded * 100 / total)))
-                    self.finished.emit(True, self._dest)
-                    return
-                except Exception as exc:
-                    last_exc = exc
-            self.finished.emit(False, str(last_exc))
+            ctx = ssl.create_default_context()
+            self._download_file(self._url, self._dest, ctx, emit_progress=True)
+            if not self._checksum_url:
+                self.finished.emit(False, "Update verification failed: this release does not include a SHA-256 checksum asset.")
+                return
+            checksum_path = f"{self._dest}.{self._checksum_name or 'sha256'}"
+            self._download_file(self._checksum_url, checksum_path, ctx, emit_progress=False)
+            expected = self._expected_sha256(checksum_path, os.path.basename(self._dest))
+            actual = self._file_sha256(self._dest)
+            if not expected or actual.lower() != expected.lower():
+                self.finished.emit(False, "Update verification failed: SHA-256 checksum did not match.")
+                return
+            signature = self._authenticode_status(self._dest)
+            if signature and signature.lower() != "valid":
+                self.finished.emit(False, f"Update verification failed: installer signature status is {signature}.")
+                return
+            detail = "signature valid" if signature else "checksum verified; signature unavailable"
+            self.finished.emit(True, f"{self._dest}|{detail}")
         except Exception as exc:
             self.finished.emit(False, str(exc))
+
+    def _download_file(self, url: str, dest: str, ctx: ssl.SSLContext, emit_progress: bool) -> None:
+        req = urllib.request.Request(url, headers={"User-Agent": "Nova-Notetaker"})
+        with urllib.request.urlopen(req, context=ctx, timeout=self._TIMEOUT) as resp:
+            total = int(resp.headers.get("Content-Length") or 0)
+            downloaded = 0
+            with open(dest, "wb") as fh:
+                while True:
+                    chunk = resp.read(self._CHUNK)
+                    if not chunk:
+                        break
+                    fh.write(chunk)
+                    downloaded += len(chunk)
+                    if emit_progress and total:
+                        self.progress.emit(min(100, int(downloaded * 100 / total)))
+
+    @staticmethod
+    def _file_sha256(path: str) -> str:
+        digest = hashlib.sha256()
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    @staticmethod
+    def _expected_sha256(path: str, installer_name: str) -> str:
+        text = Path(path).read_text(encoding="utf-8", errors="ignore")
+        hashes = re.findall(r"\b[a-fA-F0-9]{64}\b", text)
+        if not hashes:
+            return ""
+        installer_lower = installer_name.lower()
+        for line in text.splitlines():
+            if installer_lower in line.lower():
+                match = re.search(r"\b[a-fA-F0-9]{64}\b", line)
+                if match:
+                    return match.group(0)
+        return hashes[0] if len(hashes) == 1 else ""
+
+    @staticmethod
+    def _authenticode_status(path: str) -> str:
+        if sys.platform != "win32":
+            return ""
+        try:
+            completed = subprocess.run(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-Command",
+                    f"(Get-AuthenticodeSignature -LiteralPath '{path.replace("'", "''")}').Status",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+            return completed.stdout.strip()
+        except Exception:
+            return ""
 
 
 class MainWindow(
@@ -146,6 +203,7 @@ class MainWindow(
         self.live_transcription_thread: QThread | None = None
         self.live_transcription_worker: LiveTranscriptionWorker | None = None
         self.live_transcript_rows: list[tuple[str, str, str, bool]] = []
+        self.full_live_transcript_rows: list[tuple[str, str, str, bool]] = []
         self.live_tentative_insights = MeetingInsights()
         self.pending_processing_job: tuple[Path, MeetingMetadata, str] | None = None
         self._processing_queue: list[tuple[Path, MeetingMetadata, str]] = []
@@ -751,7 +809,12 @@ class MainWindow(
             return
         self._download_version = result.latest_version
         self._download_thread = QThread(self)
-        self._download_worker = _DownloadWorker(url=result.download_url, dest=dest_path)
+        self._download_worker = _DownloadWorker(
+            url=result.download_url,
+            dest=dest_path,
+            checksum_url=result.checksum_url,
+            checksum_name=result.checksum_name,
+        )
         self._download_worker.moveToThread(self._download_thread)
         self._download_thread.started.connect(self._download_worker.run)
         self._download_worker.progress.connect(self._on_download_progress)
@@ -771,6 +834,7 @@ class MainWindow(
             self._toast.error(f"Download failed: {path_or_error}")
             return
         version = getattr(self, "_download_version", "")
+        installer_path, _, verification_detail = path_or_error.partition("|")
         reply = QMessageBox.question(
             self,
             "Install Update",
@@ -779,7 +843,7 @@ class MainWindow(
             QMessageBox.Yes,
         )
         if reply == QMessageBox.Yes:
-            os.startfile(path_or_error)
+            os.startfile(installer_path)
             QApplication.quit()
 
 

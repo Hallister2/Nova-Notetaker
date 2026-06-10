@@ -35,6 +35,8 @@ class InsightsTests(TestCase):
             self.assertEqual(insights.actions[0].text, "Send status update")
             self.assertEqual(insights.actions[0].confidence, "High")
             self.assertEqual(insights.dates[0].due_date, "Friday")
+            self.assertRegex(insights.dates[0].normalized_date, r"^\d{4}-\d{2}-\d{2}$")
+            self.assertIn("Friday (", insights.dates[0].date_label)
             self.assertIn("1 action item(s) need an owner.", insights.quality_warnings)
             self.assertIn("1 insight(s) have low confidence.", insights.quality_warnings)
 
@@ -79,6 +81,7 @@ class InsightsTests(TestCase):
             self.assertEqual(insights.actions[0].confidence, "High")
             self.assertEqual(len(insights.decisions), 1)
             self.assertEqual(insights.dates[0].due_date, "Friday, May 29")
+            self.assertRegex(insights.dates[0].normalized_date, r"^\d{4}-\d{2}-\d{2}$")
 
     def test_extracts_confidence_from_parenthetical_due_and_context(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -98,6 +101,7 @@ class InsightsTests(TestCase):
             insights = build_insights_from_notes(notes_path)
 
             self.assertEqual(insights.actions[0].due_date, "Friday")
+            self.assertRegex(insights.actions[0].normalized_date, r"^\d{4}-\d{2}-\d{2}$")
             self.assertEqual(insights.actions[0].confidence, "High")
             self.assertEqual(insights.dates[0].context, "next full operations review")
             self.assertEqual(insights.dates[0].confidence, "Medium")

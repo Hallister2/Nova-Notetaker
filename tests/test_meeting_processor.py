@@ -119,6 +119,32 @@ class MeetingProcessorTests(unittest.TestCase):
 
             self.assertNotIn("Skipping AI notes because no transcript text is available yet.", metadata.processing["warnings"])
 
+
+    def test_processor_uses_live_transcript_when_available(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            folder = Path(temp_dir)
+            self._write_silent_wav(folder / "mic.wav")
+            self._write_silent_wav(folder / "system.wav")
+            live = folder / "live_transcript.md"
+            live.write_text("# Live Transcript\n\n## Meeting\n\n" + "Live transcript words " * 20, encoding="utf-8")
+            metadata = MeetingMetadata(
+                title="Live First",
+                started_at="2026-05-25T09:00:00",
+                processing={"live_transcript_path": str(live)},
+            )
+            messages: list[str] = []
+            settings = {
+                "transcription": {"enabled": False, "cross_bleed_cleanup": True, "prefer_live_transcript": True, "live_transcript_min_words": 5},
+                "ai": {"provider": "none"},
+                "storage": {"meetings_dir": "meetings", "archive_wav_to_flac": False},
+            }
+
+            MeetingProcessor(MeetingStore(), settings=settings).process(folder, metadata, messages.append)
+
+            self.assertIn("Using live transcript captured during recording", messages)
+            self.assertNotIn("WhisperLive transcription is disabled in config/settings.json.", metadata.processing["warnings"])
+            self.assertEqual(metadata.processing["diagnostics"]["transcription"]["Meeting"]["source"], "live_transcript")
+
     def test_cleanup_transcript_for_notes_collapses_incremental_repeats(self) -> None:
         transcript = (
             "# Transcript\n\n"

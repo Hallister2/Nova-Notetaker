@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from app.storage.meeting_index import search_meeting_index
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -73,21 +75,13 @@ class SearchTabMixin:
             self.search_empty_state.setVisible(True)
             return
         self.search_results_table.setRowCount(0)
-        for folder in self.meeting_store.list_meetings():
-            try:
-                metadata = self.meeting_store.read_metadata(folder)
-                title = metadata.title or folder.name
-            except Exception:
-                title = folder.name
-            for file_name in ("notes.md", "transcript.md"):
-                path = folder / file_name
-                if not path.exists():
-                    continue
-                for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
-                    plain = self._plain_note_text(line).strip()
-                    if query in plain.lower() or query in title.lower():
-                        self._add_search_result(folder, title, file_name, plain[:220] or title)
-                        break
+        for result in search_meeting_index(query, self.meeting_store):
+            self._add_search_result(
+                Path(result.folder),
+                result.title,
+                result.file_name,
+                self._plain_note_text(result.match).strip()[:220] or result.title,
+            )
         has_rows = self.search_results_table.rowCount() > 0
         self.search_results_table.setVisible(has_rows)
         self.search_empty_state.setVisible(not has_rows)

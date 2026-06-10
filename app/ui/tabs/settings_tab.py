@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from urllib.parse import urlparse
 
 import requests
@@ -7,7 +8,9 @@ import websocket
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
+    QFileDialog,
     QComboBox,
     QFrame,
     QFormLayout,
@@ -28,7 +31,10 @@ from app.core.glossary import (
     load_correction_pairs, load_glossary_terms,
     save_correction_pairs, save_glossary_terms,
 )
-from app.core.settings import save_settings, validate_settings
+from app.core.audio_profiles import AUDIO_PROFILES_PATH, load_audio_profiles
+from app.core.preflight import run_capture_preflight_checks, summarize_preflight
+from app.core.settings import LOGS_DIR, SETTINGS_PATH, USER_DATA_DIR, save_settings, validate_settings
+from app.storage.privacy import apply_retention_policy
 from app.ui.constants import CAPTURE_PROFILES, DEFAULT_LOOPBACK_DEVICE, DEFAULT_MIC_DEVICE
 from app.ui.widgets import select_combo_by_data
 
@@ -122,6 +128,21 @@ class SettingsTabMixin:
         self.settings_long_audio_chunk_seconds = QSpinBox()
         self.settings_long_audio_chunk_seconds.setRange(60, 600)
         self.settings_long_audio_chunk_seconds.setValue(int(self.settings["transcription"].get("long_audio_chunk_seconds", 180)))
+        storage_settings = self.settings.setdefault("storage", {})
+        self.settings_meetings_dir = QLineEdit(str(storage_settings.get("meetings_dir", "Meetings")))
+        self.settings_browse_meetings_button = QPushButton("Browse")
+        self.settings_browse_meetings_button.clicked.connect(self.browse_meetings_dir)
+        self.settings_archive_wav_to_flac = QCheckBox("Compress WAV to FLAC after processing")
+        self.settings_archive_wav_to_flac.setChecked(bool(storage_settings.get("archive_wav_to_flac", True)))
+        self.settings_delete_raw_audio = QCheckBox("Delete raw audio after processing")
+        self.settings_delete_raw_audio.setChecked(bool(storage_settings.get("delete_raw_audio_after_processing", False)))
+        self.settings_notes_only_archive = QCheckBox("Notes-only archive")
+        self.settings_notes_only_archive.setChecked(bool(storage_settings.get("notes_only_archive", False)))
+        self.settings_retention_days = QSpinBox()
+        self.settings_retention_days.setRange(0, 3650)
+        self.settings_retention_days.setValue(int(storage_settings.get("retention_days", 0)))
+        self.settings_apply_retention_button = QPushButton("Apply retention now")
+        self.settings_apply_retention_button.clicked.connect(self.apply_retention_now)
 
         for control in (
             self.settings_mic_combo,
@@ -144,6 +165,11 @@ class SettingsTabMixin:
             self.settings_cross_bleed_cleanup,
             self.settings_transcription_timeout,
             self.settings_long_audio_chunk_seconds,
+            self.settings_meetings_dir,
+            self.settings_archive_wav_to_flac,
+            self.settings_delete_raw_audio,
+            self.settings_notes_only_archive,
+            self.settings_retention_days,
         ):
             control.setMinimumHeight(36)
 
@@ -170,7 +196,7 @@ class SettingsTabMixin:
         settings_tabs.addTab(
             self._settings_section(
                 [
-                    ("WhisperLive", self._setting_with_hint(self.settings_transcription_enabled, "Turn this on to transcribe audio with your WhisperLive server during processing.")),
+                    ("WhisperLive", self._setting_with_hint(self.settings_transcription_enabled, "Turn this on to stream live transcript during recording and generate final transcripts with WhisperLive.")),
                     ("WhisperLive URL", self._setting_with_hint(self.settings_whisper_url, "Base URL for WhisperLive. Nova converts http/https to the matching WebSocket connection.")),
                     ("Whisper model", self._setting_with_hint(self.settings_whisper_model, "Common values are tiny, base, small, medium, and large-v3. Availability depends on your WhisperLive container/config.", visible=True)),
                     ("Whisper language", self._setting_with_hint(self.settings_whisper_language, "Use ISO-style language codes such as en. Leave as en for English meetings.")),
@@ -182,7 +208,9 @@ class SettingsTabMixin:
             ),
             "Transcription",
         )
+        settings_tabs.addTab(self._build_storage_tab(), "Storage & Privacy")
         settings_tabs.addTab(self._build_glossary_tab(), "Glossary")
+        settings_tabs.addTab(self._build_diagnostics_tab(), "Diagnostics")
         settings_tabs.addTab(self._build_updates_tab(), "Updates")
         panel_layout.addWidget(settings_tabs, stretch=1)
 
@@ -302,6 +330,47 @@ class SettingsTabMixin:
         self._openai_section.setVisible(provider == "openai")
         self._claude_section.setVisible(provider == "claude")
 
+    def _build_storage_tab(self) -> QWidget:
+        location_layout = QHBoxLayout()
+        location_layout.setContentsMargins(0, 0, 0, 0)
+        location_layout.setSpacing(8)
+        location_layout.addWidget(self.settings_meetings_dir, stretch=1)
+        location_layout.addWidget(self.settings_browse_meetings_button)
+        location_widget = QWidget()
+        location_widget.setLayout(location_layout)
+        return self._settings_section(
+            [
+                ("Meeting data location", self._setting_with_hint(location_widget, "Folder used for recordings, transcripts, notes, insights, and indexes.")),
+                ("Compress audio", self._setting_with_hint(self.settings_archive_wav_to_flac, "Converts WAV files to FLAC after processing to reduce storage while preserving reprocess capability.")),
+                ("Delete raw audio", self._setting_with_hint(self.settings_delete_raw_audio, "Deletes mic/system audio artifacts after processing. Notes and transcripts remain unless notes-only archive is enabled.")),
+                ("Notes-only archive", self._setting_with_hint(self.settings_notes_only_archive, "Keeps notes, transcript, metadata, insights, markers, and review state; removes audio and transient artifacts.")),
+                ("Retention days", self._setting_with_hint(self.settings_retention_days, "Automatically remove meetings older than this many days. Set to 0 to keep meetings indefinitely.", visible=True)),
+                ("", self.settings_apply_retention_button),
+            ]
+        )
+
+    def _build_diagnostics_tab(self) -> QWidget:
+        self.settings_log_location_label = self._muted_label(str(LOGS_DIR))
+        self.settings_log_location_label.setWordWrap(True)
+        latest_meetings = self.meeting_store.list_meetings()
+        latest_meeting = latest_meetings[0] if latest_meetings else None
+        self.settings_latest_meeting_label = self._muted_label(str(latest_meeting) if latest_meeting else "No meetings found")
+        self.settings_latest_meeting_label.setWordWrap(True)
+        self.settings_audio_profiles_label = self._muted_label(self._audio_profiles_summary())
+        self.settings_audio_profiles_label.setWordWrap(True)
+        self.settings_open_logs_button = QPushButton("Open logs folder")
+        self.settings_open_logs_button.clicked.connect(self.open_logs_folder)
+        self.settings_copy_diagnostics_button = QPushButton("Copy diagnostics")
+        self.settings_copy_diagnostics_button.clicked.connect(self.copy_diagnostics_summary)
+        return self._settings_section(
+            [
+                ("Runtime logs", self.settings_log_location_label),
+                ("Latest meeting", self.settings_latest_meeting_label),
+                ("Audio profiles", self.settings_audio_profiles_label),
+                ("", self.settings_open_logs_button),
+                ("", self.settings_copy_diagnostics_button),
+            ]
+        )
     def _build_glossary_tab(self) -> QWidget:
         from PySide6.QtWidgets import QSplitter, QTextEdit
         widget = QWidget()
@@ -501,6 +570,17 @@ class SettingsTabMixin:
         select_combo_by_data(self.settings_mic_combo, mic_value or DEFAULT_MIC_DEVICE)
         select_combo_by_data(self.settings_loopback_combo, loopback_value or DEFAULT_LOOPBACK_DEVICE)
 
+    def browse_meetings_dir(self) -> None:
+        selected = QFileDialog.getExistingDirectory(self, "Meeting data location", self.settings_meetings_dir.text().strip() or str(USER_DATA_DIR / "Meetings"))
+        if selected:
+            self.settings_meetings_dir.setText(selected)
+
+    def apply_retention_now(self) -> None:
+        self.settings.setdefault("storage", {})["retention_days"] = self.settings_retention_days.value()
+        result = apply_retention_policy(self.meeting_store, self.settings)
+        for warning in result.warnings:
+            self.log(f"Retention warning: {warning}")
+        QMessageBox.information(self, "Retention", f"Removed {result.meetings_removed} expired meeting(s).")
     def save_settings_page(self) -> None:
         self.settings["audio"]["mic_device_name"] = str(self.settings_mic_combo.currentData() or "")
         self.settings["audio"]["system_loopback_device_name"] = str(self.settings_loopback_combo.currentData() or "")
@@ -513,6 +593,12 @@ class SettingsTabMixin:
         self.settings["ai"]["claude_api_key"] = self.settings_claude_api_key.text().strip()
         self.settings["ai"]["claude_model"] = self.settings_claude_model.text().strip()
         self.settings["ai"]["timeout_seconds"] = self.settings_ai_timeout.value()
+        storage = self.settings.setdefault("storage", {})
+        storage["meetings_dir"] = self.settings_meetings_dir.text().strip() or "Meetings"
+        storage["archive_wav_to_flac"] = self.settings_archive_wav_to_flac.isChecked()
+        storage["delete_raw_audio_after_processing"] = self.settings_delete_raw_audio.isChecked()
+        storage["notes_only_archive"] = self.settings_notes_only_archive.isChecked()
+        storage["retention_days"] = self.settings_retention_days.value()
         self.settings.setdefault("review", {})["action_auto_close_days"] = self.settings_action_auto_close_days.value()
         self.settings["transcription"]["enabled"] = self.settings_transcription_enabled.isChecked()
         self.settings["transcription"]["whisperlive_url"] = self.settings_whisper_url.text().strip()
@@ -627,77 +713,65 @@ class SettingsTabMixin:
             self.log(f"WhisperLive test failed: {error}")
 
     def run_capture_preflight(self) -> None:
-        checks: list[tuple[str, bool, str]] = []
         self.refresh_devices()
-
         mic_required = self.capture_mic_toggle.isChecked() if hasattr(self, "capture_mic_toggle") else bool(self.settings["audio"].get("capture_mic", True))
         mic_device = self._resolve_microphone_device()
         loop_device = self._resolve_loopback_device()
-        checks.append(("Microphone", bool(mic_device) or not mic_required, mic_device.label if mic_device else "Muted or unavailable"))
-        checks.append(("System audio", bool(loop_device), loop_device.label if loop_device else "No WASAPI loopback resolved"))
-
-        try:
-            self.meeting_store.meetings_root.mkdir(parents=True, exist_ok=True)
-            probe_path = self.meeting_store.meetings_root / ".nova_write_test"
-            probe_path.write_text("ok", encoding="utf-8")
-            probe_path.unlink(missing_ok=True)
-            checks.append(("Meeting storage", True, str(self.meeting_store.meetings_root)))
-        except Exception as error:
-            checks.append(("Meeting storage", False, str(error)))
-
-        provider = str(self.settings_provider_combo.currentData() or "ollama")
-        if provider == "ollama":
-            ollama_url = self.settings_ollama_url.text().strip().rstrip("/") if hasattr(self, "settings_ollama_url") else self.settings["ai"].get("ollama_url", "")
-            ollama_model = self.settings_ollama_model.text().strip() if hasattr(self, "settings_ollama_model") else self.settings["ai"].get("ollama_model", "")
-            try:
-                response = requests.get(f"{ollama_url}/api/tags", timeout=5)
-                response.raise_for_status()
-                models = [item.get("name", "") for item in response.json().get("models", []) if isinstance(item, dict)]
-                model_ok = not ollama_model or ollama_model in models
-                detail = f"{ollama_model} found" if model_ok and ollama_model else "Reachable"
-                if ollama_model and not model_ok:
-                    detail = f"{ollama_model} not found"
-                checks.append(("Ollama", model_ok, detail))
-            except Exception as error:
-                checks.append(("Ollama", False, str(error)))
-        elif provider == "openai":
-            api_key = self.settings_openai_api_key.text().strip() if hasattr(self, "settings_openai_api_key") else self.settings["ai"].get("openai_api_key", "")
-            try:
-                response = requests.get("https://api.openai.com/v1/models", headers={"Authorization": f"Bearer {api_key}"}, timeout=5)
-                checks.append(("OpenAI", response.status_code == 200, "Reachable" if response.status_code == 200 else f"HTTP {response.status_code}"))
-            except Exception as error:
-                checks.append(("OpenAI", False, str(error)))
-        elif provider == "claude":
-            api_key = self.settings_claude_api_key.text().strip() if hasattr(self, "settings_claude_api_key") else self.settings["ai"].get("claude_api_key", "")
-            try:
-                response = requests.get("https://api.anthropic.com/v1/models", headers={"x-api-key": api_key, "anthropic-version": "2023-06-01"}, timeout=5)
-                checks.append(("Claude", response.status_code == 200, "Reachable" if response.status_code == 200 else f"HTTP {response.status_code}"))
-            except Exception as error:
-                checks.append(("Claude", False, str(error)))
-
-        whisper_enabled = self.settings_transcription_enabled.isChecked() if hasattr(self, "settings_transcription_enabled") else bool(self.settings["transcription"].get("enabled", False))
-        if whisper_enabled:
-            whisper_url = self.settings_whisper_url.text().strip().rstrip("/") if hasattr(self, "settings_whisper_url") else self.settings["transcription"].get("whisperlive_url", "")
-            try:
-                parsed = urlparse(whisper_url)
-                scheme = "wss" if parsed.scheme == "https" else "ws"
-                host = parsed.hostname or whisper_url.replace("http://", "").replace("https://", "")
-                port = parsed.port or (443 if scheme == "wss" else 80)
-                ws_url = f"{scheme}://{host}:{port}"
-                ws = websocket.create_connection(ws_url, timeout=5)
-                ws.close()
-                checks.append(("WhisperLive", True, ws_url))
-            except Exception as error:
-                checks.append(("WhisperLive", False, str(error)))
-        else:
-            checks.append(("WhisperLive", True, "Disabled"))
-
-        lines = [f"{'OK' if passed else 'Review'} - {name}: {detail}" for name, passed, detail in checks]
-        all_passed = all(passed for _, passed, _ in checks)
-        title = "Preflight Passed" if all_passed else "Preflight Needs Review"
+        mic_channels = self._capture_channels(mic_device, default=1, max_channels=2)
+        loopback_sample_rate, loopback_channels = self._loopback_capture_format(loop_device)
+        checks = run_capture_preflight_checks(
+            settings=self.settings,
+            meetings_root=self.meeting_store.meetings_root,
+            mic_device=mic_device,
+            loopback_device=loop_device,
+            capture_mic=mic_required,
+            mic_channels=mic_channels,
+            loopback_channels=loopback_channels,
+            check_ai=True,
+        )
+        _passed, lines = summarize_preflight(checks)
+        title = "Preflight Passed" if all(check.passed or not check.critical for check in checks) else "Preflight Needs Review"
         QMessageBox.information(self, title, "\n".join(lines))
         for line in lines:
             self.log(f"Preflight: {line}")
+        if hasattr(self, "recording_health_label"):
+            self._set_recording_health("; ".join(lines[:5]))
+        if hasattr(self, "capture_format_label"):
+            self._set_capture_format(f"mic {'muted' if not mic_required else f'{(mic_device.sample_rate if mic_device else 48000)} Hz / {mic_channels} ch'}, system {loopback_sample_rate} Hz / {loopback_channels} ch")
+
+    def open_logs_folder(self) -> None:
+        LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        try:
+            os.startfile(str(LOGS_DIR))
+        except Exception as error:
+            QMessageBox.warning(self, "Logs", f"Could not open logs folder:\n{error}")
+
+    def copy_diagnostics_summary(self) -> None:
+        lines = [
+            "Nova Notetaker Diagnostics",
+            f"Settings: {SETTINGS_PATH}",
+            f"Logs: {LOGS_DIR}",
+            f"Meetings: {self.meeting_store.meetings_root}",
+            f"Audio profiles: {self._audio_profiles_summary()}",
+            f"Microphones: {len(self.microphones)}",
+            f"Loopbacks: {len(self.loopbacks)}",
+        ]
+        for path in sorted(LOGS_DIR.glob("runtime-*.log"), key=lambda item: item.stat().st_mtime, reverse=True)[:1]:
+            lines.append(f"Latest runtime log: {path}")
+            try:
+                tail = path.read_text(encoding="utf-8", errors="replace").splitlines()[-25:]
+                lines.extend(tail)
+            except Exception as error:
+                lines.append(f"Could not read runtime log: {error}")
+        QApplication.clipboard().setText("\n".join(lines))
+        QMessageBox.information(self, "Diagnostics", "Diagnostics copied to clipboard.")
+        self.log("Diagnostics copied to clipboard.")
+
+    def _audio_profiles_summary(self) -> str:
+        profiles = load_audio_profiles()
+        if not profiles:
+            return f"No saved profiles ({AUDIO_PROFILES_PATH})"
+        return "; ".join(f"{profile.device_name}: {profile.detail}" for profile in profiles.values())
 
     def update_settings_summary(self) -> None:
         mic_setting = self.settings["audio"].get("mic_device_name", "") or DEFAULT_MIC_DEVICE

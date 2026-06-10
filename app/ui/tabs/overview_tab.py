@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 
 from app.intelligence.insights import InsightItem, MeetingInsights, load_or_build_insights, write_insights_json
 from app.storage.meeting_store import MeetingMetadata
+from app.storage.text_preview import has_usable_transcript_preview, read_text_preview
 from app.ui.constants import CLOSED_ACTION_STATUSES
 from app.ui.review_helpers import (
     apply_speaker_aliases_to_markdown,
@@ -411,7 +412,7 @@ class OverviewTabMixin:
         transcript_ok = bool(
             transcript_path
             and transcript_path.exists()
-            and MeetingProcessor._usable_existing_transcript_text(transcript_path.read_text(encoding="utf-8", errors="ignore")).strip()
+            and has_usable_transcript_preview(transcript_path)
         )
         system_audio = metadata.audio_files.get("system", {}) if isinstance(metadata.audio_files, dict) else {}
         mic_audio = metadata.audio_files.get("mic", {}) if isinstance(metadata.audio_files, dict) else {}
@@ -424,6 +425,7 @@ class OverviewTabMixin:
         readiness_score, readiness_lines = self._meeting_readiness_score(folder, metadata, insights)
         summary = [
             f"Readiness: {readiness_score}%",
+            f"Capture score: {capture_quality.get('score')}/100" if capture_quality.get("score") is not None else "Capture score: not available",
             f"Recording: {self._format_duration(duration)}" if duration else "Recording: unknown",
             f"System audio: {capture_quality.get('system_audio') or self._audio_quality_label(system_audio)}",
             f"Microphone: {capture_quality.get('microphone_audio') or ('muted' if not metadata.capture_mic else self._audio_quality_label(mic_audio))}",
@@ -780,7 +782,7 @@ class OverviewTabMixin:
             rows = []
             for item in items:
                 badges = []
-                for value in (item.owner if item.kind == "action" else "", item.due_date, item.status if item.kind == "action" else "", item.confidence):
+                for value in (item.owner if item.kind == "action" else "", item.date_label, item.status if item.kind == "action" else "", item.confidence):
                     if value:
                         badges.append(f"<span>{html.escape(value)}</span>")
                 rows.append(

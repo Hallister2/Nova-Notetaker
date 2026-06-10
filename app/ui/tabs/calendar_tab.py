@@ -366,7 +366,7 @@ class CalendarTabMixin:
                 values = [
                     "",
                     metadata.title or folder.name,
-                    str(override.get("date_text") or date_item.due_date or date_item.text),
+                    str(override.get("date_text") or date_item.date_label or date_item.text),
                     str(override.get("context") or date_item.context or date_item.text),
                     date_item.confidence or "",
                 ]
@@ -425,7 +425,7 @@ class CalendarTabMixin:
                 metadata = self.meeting_store.read_metadata(folder)
             except Exception:
                 metadata = None
-            qdate = self._calendar_qdate_from_text(date_item.text(), metadata)
+            qdate = self._calendar_qdate_from_text(self._calendar_machine_date_for_row(row) or date_item.text(), metadata)
             if not qdate or not qdate.isValid():
                 continue
             key = qdate.toString("yyyy-MM-dd")
@@ -443,6 +443,22 @@ class CalendarTabMixin:
         self.calendar_widget.set_items_by_date(items_by_date)
         selected_key = self.calendar_widget.selectedDate().toString("yyyy-MM-dd")
         self._update_calendar_day_summary(selected_key)
+
+    def _calendar_machine_date_for_row(self, row: int) -> str:
+        date_item = self.calendar_table.item(row, 2)
+        meeting_item = self.calendar_table.item(row, 1)
+        if not date_item or not meeting_item:
+            return ""
+        folder = Path(str(meeting_item.data(Qt.UserRole) or ""))
+        key = date_item.data(Qt.UserRole + 1)
+        try:
+            insights = load_or_build_insights(folder)
+        except Exception:
+            return ""
+        for item in insights.dates:
+            if candidate_key(item) == key:
+                return item.normalized_date or item.due_date
+        return ""
 
     def _calendar_date_clicked(self, date: QDate) -> None:
         key = date.toString("yyyy-MM-dd")
@@ -485,7 +501,7 @@ class CalendarTabMixin:
             metadata = self.meeting_store.read_metadata(folder)
         except Exception:
             metadata = None
-        qdate = self._calendar_qdate_from_text(date_item.text(), metadata)
+        qdate = self._calendar_qdate_from_text(self._calendar_machine_date_for_row(row) or date_item.text(), metadata)
         if qdate and qdate.isValid():
             self.calendar_widget.setSelectedDate(qdate)
             self.calendar_widget.showSelectedDate()
@@ -494,6 +510,9 @@ class CalendarTabMixin:
     @staticmethod
     def _calendar_qdate_from_text(text: str, metadata: MeetingMetadata | None) -> QDate | None:
         cleaned = re.sub(r"\s+", " ", text.strip())
+        paren_iso = re.search(r"\((\d{4}-\d{2}-\d{2})\)", cleaned)
+        if paren_iso:
+            cleaned = paren_iso.group(1)
         if not cleaned:
             return None
         base = None
@@ -552,7 +571,7 @@ class CalendarTabMixin:
                         (
                             metadata,
                             date_item,
-                            str(override.get("date_text") or date_item.due_date or date_item.text),
+                            str(override.get("date_text") or date_item.date_label or date_item.text),
                             str(override.get("context") or date_item.context or date_item.text),
                         )
                     )

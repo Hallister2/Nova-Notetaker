@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 
 from app.intelligence.insights import InsightItem, MeetingInsights, load_or_build_insights, write_insights_json
 from app.storage.meeting_store import MeetingMetadata
+from app.storage.text_preview import has_usable_transcript_preview, read_text_preview
 from app.ui.constants import CLOSED_ACTION_STATUSES
 from app.ui.dialogs import ReprocessDialog
 from app.ui.styles import build_stylesheet
@@ -216,7 +217,7 @@ class MeetingsTabMixin:
             self.meeting_table.insertRow(row)
             transcript_path = folder / "transcript.md"
             has_transcript = transcript_path.exists() and bool(
-                MeetingProcessor._usable_existing_transcript_text(transcript_path.read_text(encoding="utf-8", errors="ignore")).strip()
+                has_usable_transcript_preview(transcript_path)
             )
             status_label = self._meeting_status_label(status, review_count, has_transcript)
             # columns: 0=Date 1=Time 2=Duration 3=MeetingName 4=Status(badge) 5=Actions 6=Review 7=Open
@@ -304,7 +305,7 @@ class MeetingsTabMixin:
             transcript_path = folder / "transcript.md"
             if not transcript_path.exists():
                 return True
-            transcript_text = transcript_path.read_text(encoding="utf-8", errors="ignore")
+            transcript_text = read_text_preview(transcript_path)
             return not MeetingProcessor._usable_existing_transcript_text(transcript_text).strip()
         return True
 
@@ -367,7 +368,7 @@ class MeetingsTabMixin:
         transcript_path = folder / "transcript.md"
         if not transcript_path.exists():
             return False
-        transcript_text = transcript_path.read_text(encoding="utf-8", errors="ignore")
+        transcript_text = read_text_preview(transcript_path)
         return bool(MeetingProcessor._usable_existing_transcript_text(transcript_text).strip())
 
     def _meeting_is_important(self, folder: Path) -> bool:

@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QProgressBar,
     QPushButton,
+    QMessageBox,
     QScrollArea,
     QSizePolicy,
     QVBoxLayout,
@@ -25,10 +26,13 @@ from PySide6.QtWidgets import (
 
 from app.audio.capture_service import CaptureConfig, CaptureService
 from app.audio.device_manager import AudioDevice, AudioDeviceManager
+from app.core.audio_profiles import find_audio_profile, save_audio_profile
 from app.core.health import check_services_async
 from app.core.settings import save_settings
 from app.intelligence.insights import InsightItem, MeetingInsights, load_or_build_insights
 from app.storage.meeting_store import MeetingMetadata, MeetingStore
+from app.storage.privacy import apply_meeting_privacy, apply_retention_policy
+from app.storage.text_preview import read_text_preview
 from app.transcription.whisperlive_client import WhisperLiveClient
 from app.ui.constants import CAPTURE_PROFILES, CLOSED_ACTION_STATUSES, DEFAULT_LOOPBACK_DEVICE, DEFAULT_MIC_DEVICE
 from app.ui.live_insights import append_or_merge_live_row, clean_live_segment_text, tentative_insights_from_live_rows
@@ -211,6 +215,10 @@ class CaptureTabMixin:
         self.live_system_level.setRange(0, 100)
         self.live_system_level.setTextVisible(False)
         self.live_system_level.setMinimumWidth(150)
+        self.recording_health_label = self._muted_label("Preflight not run")
+        self.recording_health_label.setWordWrap(True)
+        self.capture_format_label = self._muted_label("Capture format pending")
+        self.capture_format_label.setWordWrap(True)
         hud_layout.addWidget(self.live_elapsed_label, 0, 0, 2, 1)
         hud_layout.addWidget(self.live_state_label, 0, 1, 2, 1, Qt.AlignLeft | Qt.AlignVCenter)
         hud_layout.addWidget(QLabel("Mic"), 0, 2)
@@ -218,6 +226,8 @@ class CaptureTabMixin:
         hud_layout.addWidget(QLabel("System"), 1, 2)
         hud_layout.addWidget(self.live_system_level, 1, 3)
         hud_layout.addWidget(self.capture_mic_toggle, 0, 4, 2, 1)
+        hud_layout.addWidget(self.recording_health_label, 2, 0, 1, 5)
+        hud_layout.addWidget(self.capture_format_label, 3, 0, 1, 5)
         hud_layout.setColumnMinimumWidth(3, 160)
         hud_layout.setColumnStretch(3, 1)
         layout.addWidget(hud)
@@ -453,12 +463,12 @@ class CaptureTabMixin:
         badges.setSpacing(5)
         for value, kind in (
             (item.owner if item.kind == "action" else "", "owner"),
-            (item.due_date if item.kind in {"action", "date"} else "", "date"),
+            (item.date_label if item.kind in {"action", "date"} else "", "date"),
             (item.confidence, f"confidence-{item.confidence.lower()}"),
         ):
             if value:
                 badges.addWidget(self._badge_label(value, kind))
-        if item.kind == "date" and item.due_date:
+        if item.kind == "date" and (item.due_date or item.normalized_date):
             cal_button = QPushButton("Calendar")
             cal_button.setObjectName("SubtleActionButton")
             cal_button.setFixedHeight(24)
@@ -484,10 +494,10 @@ class CaptureTabMixin:
         badge_values = []
         if item.kind == "action":
             badge_values.append((item.owner, "owner"))
-            badge_values.append((item.due_date, "date"))
+            badge_values.append((item.date_label, "date"))
             badge_values.append((item.status, "state"))
         elif item.kind == "date":
-            badge_values.append((item.due_date, "date"))
+            badge_values.append((item.date_label, "date"))
         badge_values.append((item.confidence, f"confidence-{item.confidence.lower()}"))
         for value, kind in badge_values:
             if not value:
@@ -533,7 +543,7 @@ class CaptureTabMixin:
             for item in open_actions
             if not item.owner or item.owner.strip().lower() in {"unknown", "unassigned", "none"}
         ]
-        due_soon = [item for item in open_actions if item.due_date and item.due_date.strip().lower() not in {"unknown", "none"}]
+        due_soon = [item for item in open_actions if (item.normalized_date or item.due_date) and (item.due_date or item.normalized_date).strip().lower() not in {"unknown", "none"}]
         if hasattr(self, "live_open_actions_count"):
             self.live_open_actions_count.setText(str(len(open_actions)))
             self.live_missing_owner_count.setText(str(len(missing_owner)))
@@ -612,7 +622,7 @@ class CaptureTabMixin:
         transcript_path = self.meeting_folder / "transcript.md"
         if not transcript_path.exists():
             return
-        text = transcript_path.read_text(encoding="utf-8")
+        text = read_text_preview(transcript_path)
         rows: list[tuple[str, str, str]] = []
         speaker = "Meeting Audio"
         for line in text.splitlines():
@@ -633,7 +643,19 @@ class CaptureTabMixin:
     def _start_live_transcription(self) -> None:
         if self.live_transcription_thread is not None:
             return
+        transcription_settings = self.settings.get("transcription", {})
+        live_enabled = bool(transcription_settings.get("enabled"))
+        live_url = str(transcription_settings.get("whisperlive_url", "")).strip()
+        if not live_enabled or not live_url:
+            if hasattr(self, "live_transcript_status_label"):
+                self.live_transcript_status_label.setText("Live transcript disabled")
+            self._set_transcript_rows([
+                ("--:--:--", "Live Transcript", "Live transcript is disabled. Final transcript will be generated after recording.", False)
+            ])
+            self.log("Live transcript disabled. Final transcript will be generated after recording.")
+            return
         self.live_transcript_rows = []
+        self.full_live_transcript_rows = []
         self.live_transcription_thread = QThread(self)
         self.live_transcription_worker = LiveTranscriptionWorker(self.settings)
         self.live_transcription_worker.moveToThread(self.live_transcription_thread)
@@ -645,7 +667,7 @@ class CaptureTabMixin:
         self.live_transcription_thread.finished.connect(self._live_transcription_finished)
         self.live_transcription_thread.finished.connect(self.live_transcription_thread.deleteLater)
         if self.worker is not None:
-            self.worker.audio_chunk.connect(self.live_transcription_worker.enqueue_audio, Qt.DirectConnection)
+            self.worker.audio_chunk.connect(self.live_transcription_worker.enqueue_audio)
         self.live_transcription_thread.start()
 
     def _stop_live_transcription(self) -> None:
@@ -664,6 +686,7 @@ class CaptureTabMixin:
             return
         timestamp = self._recording_offset_label()
         is_partial = not final
+        append_or_merge_live_row(self.full_live_transcript_rows, timestamp, speaker, text, is_partial)
         append_or_merge_live_row(self.live_transcript_rows, timestamp, speaker, text, is_partial)
         self.live_transcript_rows = self.live_transcript_rows[-18:]
         self._set_transcript_rows(self.live_transcript_rows)
@@ -690,7 +713,28 @@ class CaptureTabMixin:
             folder, metadata, mode = self.pending_processing_job
             self.pending_processing_job = None
             self.log("Live transcript stream closed. Starting post-processing.")
+            self._write_live_transcript_artifact(folder, metadata)
             self._start_processing(folder, metadata, mode=mode)
+
+    def _write_live_transcript_artifact(self, folder: Path | None, metadata: MeetingMetadata | None) -> None:
+        if folder is None or metadata is None:
+            return
+        rows = getattr(self, "full_live_transcript_rows", [])
+        final_rows = [row for row in rows if len(row) >= 4 and not row[3] and str(row[2]).strip()]
+        if not final_rows:
+            return
+        lines = ["# Live Transcript", "", "## Meeting", ""]
+        for _timestamp, _speaker, text, _is_partial in final_rows:
+            clean = str(text).strip()
+            if clean:
+                lines.append(clean)
+        path = folder / "live_transcript.md"
+        path.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
+        metadata.processing = {
+            **(metadata.processing if isinstance(metadata.processing, dict) else {}),
+            "live_transcript_path": str(path),
+        }
+        self.meeting_store.write_metadata(folder, metadata)
 
     def _recording_offset_label(self) -> str:
         if not self.recording_started_at:
@@ -805,6 +849,13 @@ class CaptureTabMixin:
             QMessageBox.warning(self, "Nova Notetaker", "Select a microphone in Settings before starting capture.")
             return
 
+        mic_sample_rate = (mic_device.sample_rate if mic_device else None) or 48000
+        mic_channels = self._capture_channels(mic_device, default=1, max_channels=2)
+        loopback_sample_rate, loopback_channels = self._loopback_capture_format(loop_device)
+        if not loop_device:
+            QMessageBox.warning(self, "Nova Notetaker", "Select a system audio device in Settings before starting capture.")
+            return
+        self._set_recording_health("Starting capture. Mic/system levels will update once streams are online.")
         self._save_audio_selections(mic_device, loop_device)
 
         title = self.meeting_title.text().strip() or "Untitled Meeting"
@@ -828,19 +879,21 @@ class CaptureTabMixin:
             mic_device_index=mic_device.index if mic_device else None,
             loopback_device_index=loop_device.index if loop_device else None,
             capture_mic=capture_mic,
-            mic_sample_rate=(mic_device.sample_rate if mic_device else None) or 48000,
-            mic_channels=self._capture_channels(mic_device, default=1),
-            loopback_sample_rate=(loop_device.sample_rate if loop_device else None) or 48000,
-            loopback_channels=self._capture_channels(loop_device, default=2),
+            mic_sample_rate=mic_sample_rate,
+            mic_channels=mic_channels,
+            loopback_sample_rate=loopback_sample_rate,
+            loopback_channels=loopback_channels,
         )
 
+        self.current_capture_config = config
+        self.current_loopback_device = loop_device
         self.worker_thread = QThread(self)
         self.worker = CaptureWorker(config)
         self.worker.moveToThread(self.worker_thread)
 
         self.request_worker_start.connect(self.worker.start)
         self.request_worker_stop.connect(self.worker.stop)
-        self.worker.status.connect(self.log)
+        self.worker.status.connect(self._capture_status)
         self.worker.level.connect(self.update_level)
         self.worker.stopped.connect(self.worker_thread.quit)
         self.worker.stopped.connect(self.worker.deleteLater)
@@ -880,6 +933,9 @@ class CaptureTabMixin:
         self.footer_save_label.setText(f"Saving to: {self.meeting_folder.name}")
         self.footer_save_label.setToolTip(str(self.meeting_folder))
         self.live_transcript_rows = []
+        self.full_live_transcript_rows = []
+        self.system_audio_detected = False
+        self.system_audio_warning_shown = False
         self.live_tentative_insights = MeetingInsights()
         self._update_operational_metrics()
         self.action_items_count.setText("0")
@@ -895,14 +951,62 @@ class CaptureTabMixin:
         self._set_transcript_rows([("--:--:--", "Meeting Audio", "Listening for meeting audio...", True)])
         self._start_live_transcription()
         self.log(f"Meeting folder: {self.meeting_folder}")
-        self.log(
-            "Capture format: "
+        capture_format = (
             f"mic {'muted' if not config.capture_mic else f'{config.mic_sample_rate} Hz / {config.mic_channels} ch'}, "
             f"system {config.loopback_sample_rate} Hz / {config.loopback_channels} ch"
         )
+        self._set_capture_format(capture_format)
+        self.log(f"Capture format: {capture_format}")
         self.log(f"Capture profile: {self._profile_label(self.settings['audio'].get('capture_profile', ''))}")
         self.request_worker_start.emit()
 
+    @Slot(str)
+    def _capture_status(self, message: str) -> None:
+        self.log(message)
+        lower = message.lower()
+        if "microphone capture online" in lower:
+            self._set_recording_health("Mic online. Waiting for system audio.")
+        elif "system loopback capture online" in lower:
+            self._set_recording_health("Mic/system capture online.")
+            self._remember_current_loopback_profile()
+        elif "system loopback capture failed" in lower:
+            self._set_recording_health(f"System audio failed: {message}")
+            if hasattr(self, "live_transcript_status_label"):
+                self.live_transcript_status_label.setText("System audio capture failed; check output device.")
+        elif "system loopback capture saved" in lower:
+            self._set_recording_health(message)
+        elif "microphone capture failed" in lower:
+            self._set_recording_health(f"Mic failed: {message}")
+
+    def _set_recording_health(self, text: str) -> None:
+        if hasattr(self, "recording_health_label"):
+            self.recording_health_label.setText(text)
+
+    def _set_capture_format(self, text: str) -> None:
+        if hasattr(self, "capture_format_label"):
+            self.capture_format_label.setText(f"Format: {text}")
+
+    def _loopback_capture_format(self, device: AudioDevice | None) -> tuple[int, int]:
+        if device is None:
+            return 48000, 2
+        profile = find_audio_profile(device.name)
+        if profile:
+            self.log(f"Using saved audio profile for {device.label}: {profile.detail}")
+            return profile.sample_rate, profile.channels
+        sample_rate = (device.sample_rate if device else None) or 48000
+        channels = self._capture_channels(device, default=2, max_channels=None)
+        return int(sample_rate), int(channels)
+
+    def _remember_current_loopback_profile(self) -> None:
+        device = getattr(self, "current_loopback_device", None)
+        config = getattr(self, "current_capture_config", None)
+        if device is None or config is None:
+            return
+        try:
+            profile = save_audio_profile(device.name, config.loopback_sample_rate, config.loopback_channels)
+            self.log(f"Saved audio profile for {device.label}: {profile.detail}")
+        except Exception as error:
+            self.log(f"Could not save audio profile: {error}")
     def _resolve_microphone_device(self) -> AudioDevice | None:
         setting = self.settings["audio"].get("mic_device_name", "") or DEFAULT_MIC_DEVICE
         if setting == DEFAULT_MIC_DEVICE:
@@ -1028,6 +1132,7 @@ class CaptureTabMixin:
                 if hasattr(self, "live_transcript_status_label"):
                     self.live_transcript_status_label.setText("Closing live transcript before final processing.")
             else:
+                self._write_live_transcript_artifact(self.meeting_folder, self.metadata)
                 self._start_processing(self.meeting_folder, self.metadata, mode="full")
         else:
             self._processing_finished()
@@ -1055,10 +1160,12 @@ class CaptureTabMixin:
             self._refresh_widget_style(self.capture_mic_toggle)
 
     @staticmethod
-    def _capture_channels(device: AudioDevice | None, default: int) -> int:
+    def _capture_channels(device: AudioDevice | None, default: int, max_channels: int | None = 2) -> int:
         if device is None or device.channels <= 0:
             return default
-        return min(device.channels, 2)
+        if max_channels is None:
+            return device.channels
+        return min(device.channels, max_channels)
 
     def _start_processing(self, folder: Path, metadata: MeetingMetadata, mode: str = "full") -> None:
         if self.processing_thread is not None and self.processing_thread.isRunning():
@@ -1154,6 +1261,17 @@ class CaptureTabMixin:
         else:
             self.orb_caption.setText("Waiting to start")
         if self.meeting_folder:
+            privacy_result = apply_meeting_privacy(self.meeting_folder, self.settings)
+            retention_result = apply_retention_policy(self.meeting_store, self.settings)
+            for warning in (*privacy_result.warnings, *retention_result.warnings):
+                self.log(f"Privacy cleanup warning: {warning}")
+            if privacy_result.raw_audio_deleted or privacy_result.files_removed or retention_result.meetings_removed:
+                self.log(
+                    "Privacy cleanup complete: "
+                    f"{privacy_result.raw_audio_deleted} audio file(s), "
+                    f"{privacy_result.files_removed} archive file(s), "
+                    f"{retention_result.meetings_removed} expired meeting(s)."
+                )
             self.log(f"Processing complete. Notes: {self.meeting_folder / 'notes.md'}")
             self._refresh_live_transcript_from_file()
             self._update_live_insights_from_folder(self.meeting_folder)
@@ -1212,7 +1330,7 @@ class CaptureTabMixin:
         import tempfile
         from app.ui.review_helpers import ics_escape
         now_stamp = datetime.now().strftime("%Y%m%dT%H%M%S")
-        due_date = item.due_date or item.text or ""
+        due_date = item.date_label or item.text or ""
         context = item.context or item.text or due_date
         dtstart = ""
         import re as _re
@@ -1302,6 +1420,19 @@ class CaptureTabMixin:
             self.system_level.setValue(value)
             if hasattr(self, "live_system_level"):
                 self.live_system_level.setValue(value)
+            if value >= 3:
+                self.system_audio_detected = True
+            elif (
+                self.timer_phase == "recording"
+                and not getattr(self, "system_audio_detected", False)
+                and not getattr(self, "system_audio_warning_shown", False)
+                and self.recording_started_at
+                and (datetime.now() - self.recording_started_at).total_seconds() >= 30
+            ):
+                self.system_audio_warning_shown = True
+                self.log("System audio is still silent after 30 seconds; confirm the selected output device is correct.")
+                if hasattr(self, "live_transcript_status_label"):
+                    self.live_transcript_status_label.setText("System audio is silent; check output device.")
 
     @staticmethod
     def _device_by_name(devices: list[AudioDevice], name: str) -> AudioDevice | None:

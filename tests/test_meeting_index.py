@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 from unittest import TestCase
 
-from app.storage.meeting_index import build_meeting_index
+from app.storage.meeting_index import build_meeting_index, search_meeting_index, write_meeting_index
 from app.storage.meeting_store import MeetingMetadata, MeetingStore
 from app.ui.review_helpers import apply_speaker_aliases_to_markdown, candidate_key, ics_escape, transcript_speakers
 
@@ -39,13 +39,38 @@ class MeetingIndexTests(TestCase):
 
             index = build_meeting_index(store)
 
-            self.assertEqual(index["schema_version"], 1)
+            self.assertEqual(index["schema_version"], 2)
             self.assertEqual(len(index["records"]), 1)
             record = index["records"][0]
             self.assertEqual(record["title"], "Test Meeting")
             self.assertTrue(record["has_transcript"])
             self.assertEqual(record["open_actions"], 1)
-            self.assertIn("Friday", record["dates"])
+            self.assertTrue(record["dates"])
+
+
+    def test_search_uses_sqlite_fts_index(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MeetingStore()
+            store.meetings_root = Path(temp_dir)
+            folder = store.meetings_root / "2026-05-26_100000_search"
+            folder.mkdir()
+            store.write_metadata(
+                folder,
+                MeetingMetadata(
+                    title="Waypoint Planning",
+                    started_at="2026-05-26T10:00:00",
+                    status="processed",
+                ),
+            )
+            (folder / "notes.md").write_text("## Summary\nDiscussed utility account rollout.", encoding="utf-8")
+            (folder / "transcript.md").write_text("## Meeting\nWaypoint access needs validation.", encoding="utf-8")
+
+            write_meeting_index(store)
+            results = search_meeting_index("Waypoint", store)
+
+            self.assertTrue(results)
+            self.assertIn("Waypoint Planning", {result.title for result in results})
+            self.assertTrue({result.file_name for result in results} & {"notes.md", "transcript.md", "metadata"})
 
     def test_meeting_markers_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

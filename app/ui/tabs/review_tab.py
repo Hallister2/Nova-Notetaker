@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.intelligence.insights import InsightItem, MeetingInsights, load_or_build_insights, write_insights_json
+from app.storage.action_exports import write_actions_csv, write_actions_digest
 from app.storage.meeting_store import MeetingMetadata
 from app.ui.constants import CLOSED_ACTION_STATUSES
 from app.ui.styles import build_stylesheet
@@ -45,8 +46,14 @@ class ReviewTabMixin:
         title_block.addWidget(self._muted_label("Today view for stuck meetings, pinned work, due actions, and recent output."))
         header.addLayout(title_block)
         header.addStretch()
+        self.review_export_csv_button = QPushButton("Export CSV")
+        self.review_export_csv_button.clicked.connect(self.export_action_queue_csv)
+        self.review_export_digest_button = QPushButton("Export Digest")
+        self.review_export_digest_button.clicked.connect(self.export_action_digest)
         self.review_refresh_button = QPushButton("Refresh")
         self.review_refresh_button.clicked.connect(self.refresh_review_center)
+        header.addWidget(self.review_export_csv_button)
+        header.addWidget(self.review_export_digest_button)
         header.addWidget(self.review_refresh_button)
         layout.addLayout(header)
 
@@ -122,6 +129,16 @@ class ReviewTabMixin:
         panel_layout.addWidget(self.review_actions_table, stretch=1)
         layout.addWidget(panel, stretch=1)
         return page
+
+    def export_action_queue_csv(self) -> None:
+        path = write_actions_csv(self.meeting_store)
+        QMessageBox.information(self, "Action Export", f"Open actions exported:\n{path}")
+        self.log(f"Exported open action CSV: {path}")
+
+    def export_action_digest(self) -> None:
+        path = write_actions_digest(self.meeting_store)
+        QMessageBox.information(self, "Action Digest", f"Action digest exported:\n{path}")
+        self.log(f"Exported action digest: {path}")
 
     def refresh_review_center(self) -> None:
         if hasattr(self, "action_dashboard_table"):
@@ -233,7 +250,7 @@ class ReviewTabMixin:
             metadata.title or folder.name,
             action.owner or "Unknown",
             action.text,
-            action.due_date or "Unknown",
+            action.date_label or "Unknown",
             action.status or "open",
         ]
         for column, value in enumerate(values):
@@ -263,7 +280,7 @@ class ReviewTabMixin:
             self.open_meeting_overview(Path(str(folder_value)))
 
     def _action_is_due_soon(self, action: InsightItem, days: int = 7) -> bool:
-        due_date = self._calendar_qdate_from_text(action.due_date, None)
+        due_date = self._calendar_qdate_from_text(action.normalized_date or action.due_date, None)
         if due_date is None:
             return False
         delta = QDate.currentDate().daysTo(due_date)
@@ -326,6 +343,7 @@ class ReviewTabMixin:
             return
         item.owner = owner_edit.text().strip() or "Unknown"
         item.due_date = due_edit.text().strip() or "Unknown"
+        item.normalized_date = ""
         item.text = task_edit.toPlainText().strip() or item.text
         item.confidence = confidence_combo.currentText().strip()
         item.status = status_combo.currentText().strip() or "open"
